@@ -473,8 +473,8 @@ button{cursor:pointer}
               <input id="notifyChanges" type="checkbox" onchange="saveNotificationSettings()">
             </label>
           </div>
-          <div style="margin-top:14px;padding:12px;border-radius:12px;background:#fff8e7;border:1px solid #f6df9c;font-size:11px;line-height:1.5">
-            <b>Local test build:</b> messages are prepared in the queue. Email can open in the computer's default mail app. Automatic email/SMS delivery will be connected when the app moves online.
+          <div style="margin-top:14px;padding:12px;border-radius:12px;background:#eef8f0;border:1px solid #bfe1c6;font-size:11px;line-height:1.5">
+            <b>Automatic parent email:</b> when <b>Afternoon Boarding</b> is enabled, a successful boarding scan automatically emails the parent/guardian address stored on the scholar record. Duplicate scans do not send duplicate emails.
           </div>
         </div>
       </div>
@@ -487,7 +487,9 @@ button{cursor:pointer}
               <select id="notifFilter" onchange="renderNotifications()">
                 <option value="">All Messages</option>
                 <option>Pending</option>
+                <option>Sending</option>
                 <option>Sent</option>
+                <option>Failed</option>
                 <option>Missing Contact</option>
               </select>
               <button class="secondaryBtn" onclick="clearSentNotifications()">Clear Sent</button>
@@ -795,7 +797,13 @@ function transportEventExists(studentId,scanMode,date=getLocalDateKey()){return 
 function recordTransportEvent(s,bus,scanMode,source='Scanner',stop=''){
   let l=loadBoardingLog(),d=getLocalDateKey();if(transportEventExists(s.studentId,scanMode,d))return{ok:false,duplicate:true,event:l.find(x=>x.date===d&&x.mode===scanMode&&String(x.studentId)===String(s.studentId))};
   let ev={id:'scan_'+Date.now(),date:d,time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'}),timestamp:new Date().toISOString(),mode:scanMode,studentId:s.studentId,scholar:scholarName(s),grade:s.grade||'',bus:bus||'',stop:stop||'',source};
-  l.push(ev);localStorage.setItem(BOARDING_KEY,JSON.stringify(l));renderScanSummary();renderRecentScans();renderLiveManifests();if(window.gwcaCloudReady)cloudInsertTravelEvent(ev);return{ok:true,event:ev}
+  l.push(ev);
+  localStorage.setItem(BOARDING_KEY,JSON.stringify(l));
+  renderScanSummary();renderRecentScans();renderLiveManifests();
+  if(window.gwcaCloudReady)cloudInsertTravelEvent(ev);
+  // Create/send the parent notification only after a successful, non-duplicate travel event.
+  try{queueEventNotification(s,scanMode,bus,stop,ev.time)}catch(e){console.error('Parent notification trigger failed:',e)}
+  return{ok:true,event:ev}
 }
 function scan(){
   let id=barcode.value.trim(),entry=Object.entries(scholars).find(([sid,s])=>sid===id||String(s.barcodeId||'')===id),s=entry&&entry[1],scanMode=document.getElementById('mode').value,selected=scanBus.value;
@@ -1874,17 +1882,121 @@ function notificationTemplate(mode,s,bus,stop,time){
   if(mode==='Bus Drop-Off')return{subject:`${school} Transportation — Drop-Off`,message:`${first} was checked off the bus at ${stop||'the assigned stop'} at ${time}.`};
   return{subject:`${school} Transportation Update`,message:`Transportation update for ${first}.`};
 }
+function saveNotificationRecord(n){
+  let list=loadNotifications();
+  let idx=list.findIndex(x=>String(x.id)===String(n.id));
+  if(idx>=0)list[idx]=n;else list.push(n);
+  localStorage.setItem(NOTIF_KEY,JSON.stringify(list));
+  if(window.gwcaCloudReady)cloudUpsertNotifications([n]);
+  if(document.getElementById('notificationQueue'))renderNotifications();
+  try{renderCommandCenter()}catch(e){}
+}
+
+async function sendAutomaticParentEmail(n){
+  if(!n?.email)return false;
+  if(!window.gwcaCloudReady){
+    n.status='Pending';
+    n.deliveryError='Shared system is not connected.';
+    saveNotificationRecord(n);
+    return false;
+  }
+
+  n.status='Sending';
+  n.deliveryError='';
+  saveNotificationRecord(n);
+
+  try{
+    const sessionResult=await withTimeout(window.gwcaSupabase.auth.getSession(),8000,'Checking email session');
+    const session=sessionResult?.data?.session;
+    if(sessionResult?.error)throw sessionResult.error;
+    if(!session)throw new Error('Your session expired before the parent email could be sent.');
+
+    const controller=new AbortController();
+    const timer=setTimeout(()=>controller.abort(),15000);
+    let response;
+    try{
+      response=await fetch(GWCA_SUPABASE_URL+'/functions/v1/transport-parent-email',{
+        method:'POST',
+        headers:{
+          'Authorization':'Bearer '+session.access_token,
+          'apikey':GWCA_SUPABASE_PUBLISHABLE_KEY,
+          'Content-Type':'application/json'
+        },
+        body:JSON.stringify({
+          notification_id:n.id,
+          student_id:n.studentId,
+          scholar:n.scholar,
+          parent_name:n.parentName||'',
+          to:n.email,
+          subject:n.subject,
+          message:n.message,
+          type:n.type,
+          date:n.date,
+          time:n.time
+        }),
+        signal:controller.signal
+      });
+    }finally{
+      clearTimeout(timer);
+    }
+
+    const body=await withTimeout(response.text(),5000,'Reading email response');
+    let result={};
+    try{result=body?JSON.parse(body):{}}catch(e){result={raw:body}}
+
+    if(!response.ok){
+      throw new Error(result.error||result.message||`Email service HTTP ${response.status}`);
+    }
+
+    n.status='Sent';
+    n.sentAt=new Date().toISOString();
+    n.deliveryId=result.id||result.email_id||'';
+    n.deliveryError='';
+    saveNotificationRecord(n);
+    return true;
+  }catch(e){
+    console.error('Automatic parent email failed:',e);
+    n.status='Failed';
+    n.deliveryError=(e?.name==='AbortError')?'Email request timed out.':(e.message||String(e));
+    saveNotificationRecord(n);
+    return false;
+  }
+}
+
 function queueEventNotification(s,mode,bus,stop,time){
-  if(!notificationEnabledForMode(mode))return;
+  if(!notificationEnabledForMode(mode))return null;
+
   let list=loadNotifications(),date=getLocalDateKey();
-  if(list.some(n=>n.date===date&&String(n.studentId)===String(s.studentId)&&n.type===mode))return;
+  let existing=list.find(n=>n.date===date&&String(n.studentId)===String(s.studentId)&&n.type===mode);
+  if(existing)return existing;
+
   let t=notificationTemplate(mode,s,bus,stop,time);
   let email=parentEmailForScholar(s),phone=parentPhoneForScholar(s);
-  list.push({id:'notif_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),date,time,studentId:s.studentId,scholar:scholarName(s),parentName:parentNameForScholar(s),email,phone,type:mode,subject:t.subject,message:t.message,status:(email||phone)?'Pending':'Missing Contact',createdAt:new Date().toISOString(),sentAt:''});
-  localStorage.setItem(NOTIF_KEY,JSON.stringify(list));
-  if(window.gwcaCloudReady)cloudUpsertNotifications([list[list.length-1]]);
-  if(document.getElementById('notificationQueue'))renderNotifications();
+  let n={
+    id:'notif_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),
+    date,time,
+    studentId:s.studentId,
+    scholar:scholarName(s),
+    parentName:parentNameForScholar(s),
+    email,phone,
+    type:mode,
+    subject:t.subject,
+    message:t.message,
+    status:email?'Pending':(phone?'Pending':'Missing Contact'),
+    createdAt:new Date().toISOString(),
+    sentAt:'',
+    deliveryError:''
+  };
+
+  saveNotificationRecord(n);
+
+  // User requested automatic email when the scholar gets on the afternoon bus.
+  if(mode==='Afternoon Boarding' && email){
+    sendAutomaticParentEmail(n);
+  }
+  return n;
 }
+
 function queueChangeNotification(change){
   if(!getNotificationSettings().changes)return;
   let s=scholars[change.studentId];if(!s)return;
@@ -1908,21 +2020,26 @@ function renderNotifications(){
   let filter=document.getElementById('notifFilter')?.value||'';
   if(filter)list=list.filter(n=>n.status===filter);
   let all=loadNotifications(),today=getLocalDateKey();
-  notifPending.textContent=all.filter(n=>n.status==='Pending').length;
-  notifSentToday.textContent=all.filter(n=>n.status==='Sent'&&n.date===today).length;
-  notifNoContact.textContent=all.filter(n=>n.status==='Missing Contact').length;
-  notifTotal.textContent=all.length;
+  const pendingEl=document.getElementById('notifPending');
+  const sentTodayEl=document.getElementById('notifSentToday');
+  const noContactEl=document.getElementById('notifNoContact');
+  const totalEl=document.getElementById('notifTotal');
+  if(pendingEl)pendingEl.textContent=all.filter(n=>n.status==='Pending').length;
+  if(sentTodayEl)sentTodayEl.textContent=all.filter(n=>n.status==='Sent'&&n.date===today).length;
+  if(noContactEl)noContactEl.textContent=all.filter(n=>n.status==='Missing Contact').length;
+  if(totalEl)totalEl.textContent=all.length;
   if(!list.length){box.innerHTML='<div class="emptyState">No parent notifications match this view.</div>';return}
   box.innerHTML=list.map(n=>`<div style="border:1px solid #dce5ef;border-radius:14px;padding:14px;margin-bottom:10px;background:#fff">
     <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
       <div><b>${escapeHtml(n.scholar||'')}</b><div style="font-size:10px;color:var(--muted);margin-top:3px">${escapeHtml(n.type||'')} • ${escapeHtml(n.date||'')} ${escapeHtml(n.time||'')}</div></div>
-      <span class="pill ${n.status==='Sent'?'statusActive':n.status==='Missing Contact'?'orange':''}">${escapeHtml(n.status)}</span>
+      <span class="pill ${n.status==='Sent'?'statusActive':(n.status==='Missing Contact'||n.status==='Failed')?'orange':''}">${escapeHtml(n.status)}</span>
     </div>
     <div style="font-size:11px;margin-top:10px"><b>${escapeHtml(n.subject||'')}</b></div>
     <div style="font-size:11px;color:#3f4b5e;line-height:1.5;margin-top:6px">${escapeHtml(n.message||'')}</div>
     <div style="font-size:10px;color:var(--muted);margin-top:8px">${n.email?`Email: ${escapeHtml(n.email)}`:'No email'}${n.phone?` • Phone: ${escapeHtml(n.phone)}`:''}</div>
+    ${n.deliveryError?`<div style="font-size:10px;color:#a92323;margin-top:7px"><b>Email error:</b> ${escapeHtml(n.deliveryError)}</div>`:''}
     <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:11px">
-      ${n.email?`<button class="tinyBtn" onclick="sendNotificationEmail('${jsQuote(n.id)}')">Open Email</button>`:''}
+      ${n.email?`<button class="tinyBtn" onclick="retryAutomaticParentEmail('${jsQuote(n.id)}')">${n.status==='Sent'?'Send Again':'Send Email'}</button>`:''}
       <button class="tinyBtn" onclick="copyNotification('${jsQuote(n.id)}')">Copy Message</button>
       <button class="tinyBtn" onclick="editNotification('${jsQuote(n.id)}')">Edit</button>
       ${n.status!=='Sent'?`<button class="tinyBtn" onclick="markNotificationSent('${jsQuote(n.id)}')">Mark Sent</button>`:''}
@@ -1931,6 +2048,11 @@ function renderNotifications(){
   </div>`).join('');
 }
 function notificationById(id){return loadNotifications().find(n=>n.id===id)}
+function retryAutomaticParentEmail(id){
+  let n=notificationById(id);if(!n)return;
+  if(!n.email){alert('No parent email address is stored for this scholar.');return}
+  sendAutomaticParentEmail(n);
+}
 function sendNotificationEmail(id){
   let n=notificationById(id);if(!n||!n.email)return;
   let href=`mailto:${encodeURIComponent(n.email)}?subject=${encodeURIComponent(n.subject||'GWCA Transportation')}&body=${encodeURIComponent(n.message||'')}`;
@@ -1955,15 +2077,83 @@ async function deleteNotification(id){
   }
 }
 function clearSentNotifications(){if(!confirm('Clear all notifications marked Sent?'))return;saveNotifications(loadNotifications().filter(n=>n.status!=='Sent'))}
-function openManualNotification(){notificationModal.style.display='flex';notificationModalTitle.textContent='New Parent Notification';notificationEditId.value='';notificationStudentId.value='';notificationScholarName.value='';notificationParentName.value='';notificationParentEmail.value='';notificationParentPhone.value='';notificationType.value='General Transportation';notificationSubject.value='GWCA Transportation Update';notificationMessage.value=''}
-function closeNotificationModal(){notificationModal.style.display='none'}
-function loadNotificationScholar(){let id=notificationStudentId.value.trim(),s=scholars[id]||Object.values(scholars).find(x=>String(x.barcodeId||'')===id);if(!s)return;notificationStudentId.value=s.studentId;notificationScholarName.value=scholarName(s);notificationParentName.value=parentNameForScholar(s);notificationParentEmail.value=parentEmailForScholar(s);notificationParentPhone.value=parentPhoneForScholar(s)}
-function saveManualNotification(){
-  let id=notificationEditId.value,a=loadNotifications(),existing=id?a.find(n=>n.id===id):null;
-  let obj={id:id||'notif_'+Date.now(),date:getLocalDateKey(),time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),studentId:notificationStudentId.value.trim(),scholar:notificationScholarName.value.trim(),parentName:notificationParentName.value.trim(),email:notificationParentEmail.value.trim(),phone:notificationParentPhone.value.trim(),type:notificationType.value,subject:notificationSubject.value.trim(),message:notificationMessage.value.trim(),status:(notificationParentEmail.value.trim()||notificationParentPhone.value.trim())?(existing?.status||'Pending'):'Missing Contact',createdAt:existing?.createdAt||new Date().toISOString(),sentAt:existing?.sentAt||''};
-  if(existing)Object.assign(existing,obj);else a.push(obj);localStorage.setItem(NOTIF_KEY,JSON.stringify(a));closeNotificationModal();renderNotifications()
+function notifEl(id){return document.getElementById(id)}
+function openManualNotification(){
+  const modal=notifEl('notificationModal');
+  if(!modal){alert('The parent notification form could not be opened. Please refresh the page.');return}
+  modal.style.display='flex';
+  notifEl('notificationModalTitle').textContent='New Parent Notification';
+  notifEl('notificationEditId').value='';
+  notifEl('notificationStudentId').value='';
+  notifEl('notificationScholarName').value='';
+  notifEl('notificationParentName').value='';
+  notifEl('notificationParentEmail').value='';
+  notifEl('notificationParentPhone').value='';
+  notifEl('notificationType').value='General Transportation';
+  notifEl('notificationSubject').value='GWCA Transportation Update';
+  notifEl('notificationMessage').value='';
+  setTimeout(()=>notifEl('notificationStudentId')?.focus(),50);
 }
-function editNotification(id){let n=notificationById(id);if(!n)return;notificationModal.style.display='flex';notificationModalTitle.textContent='Edit Parent Notification';notificationEditId.value=n.id;notificationStudentId.value=n.studentId||'';notificationScholarName.value=n.scholar||'';notificationParentName.value=n.parentName||'';notificationParentEmail.value=n.email||'';notificationParentPhone.value=n.phone||'';notificationType.value=n.type||'General Transportation';notificationSubject.value=n.subject||'';notificationMessage.value=n.message||''}
+function closeNotificationModal(){
+  const modal=notifEl('notificationModal');
+  if(modal)modal.style.display='none';
+}
+function loadNotificationScholar(){
+  const id=(notifEl('notificationStudentId')?.value||'').trim();
+  const s=scholars[id]||Object.values(scholars).find(x=>String(x.barcodeId||'')===id);
+  if(!s){alert('No scholar was found for that Student ID or barcode.');return}
+  notifEl('notificationStudentId').value=s.studentId||'';
+  notifEl('notificationScholarName').value=scholarName(s);
+  notifEl('notificationParentName').value=parentNameForScholar(s);
+  notifEl('notificationParentEmail').value=parentEmailForScholar(s);
+  notifEl('notificationParentPhone').value=parentPhoneForScholar(s);
+}
+function saveManualNotification(){
+  const editId=(notifEl('notificationEditId')?.value||'').trim();
+  const a=loadNotifications();
+  const existing=editId?a.find(n=>String(n.id)===String(editId)):null;
+  const email=(notifEl('notificationParentEmail')?.value||'').trim();
+  const phone=(notifEl('notificationParentPhone')?.value||'').trim();
+  const obj={
+    id:editId||'notif_'+Date.now()+'_'+Math.random().toString(36).slice(2,7),
+    date:existing?.date||getLocalDateKey(),
+    time:new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}),
+    studentId:(notifEl('notificationStudentId')?.value||'').trim(),
+    scholar:(notifEl('notificationScholarName')?.value||'').trim(),
+    parentName:(notifEl('notificationParentName')?.value||'').trim(),
+    email,phone,
+    type:notifEl('notificationType')?.value||'General Transportation',
+    subject:(notifEl('notificationSubject')?.value||'').trim(),
+    message:(notifEl('notificationMessage')?.value||'').trim(),
+    status:(email||phone)?(existing?.status||'Pending'):'Missing Contact',
+    createdAt:existing?.createdAt||new Date().toISOString(),
+    sentAt:existing?.sentAt||'',
+    deliveryError:existing?.deliveryError||''
+  };
+  if(!obj.scholar){alert('Enter or load a scholar before saving the message.');return}
+  if(!obj.message){alert('Enter a message before saving.');return}
+  if(existing)Object.assign(existing,obj);else a.push(obj);
+  localStorage.setItem(NOTIF_KEY,JSON.stringify(a));
+  if(window.gwcaCloudReady)cloudUpsertNotifications([obj]);
+  closeNotificationModal();
+  renderNotifications();
+  try{renderCommandCenter()}catch(e){}
+}
+function editNotification(id){
+  const n=notificationById(id);if(!n)return;
+  const modal=notifEl('notificationModal');if(!modal)return;
+  modal.style.display='flex';
+  notifEl('notificationModalTitle').textContent='Edit Parent Notification';
+  notifEl('notificationEditId').value=n.id||'';
+  notifEl('notificationStudentId').value=n.studentId||'';
+  notifEl('notificationScholarName').value=n.scholar||'';
+  notifEl('notificationParentName').value=n.parentName||'';
+  notifEl('notificationParentEmail').value=n.email||'';
+  notifEl('notificationParentPhone').value=n.phone||'';
+  notifEl('notificationType').value=n.type||'General Transportation';
+  notifEl('notificationSubject').value=n.subject||'';
+  notifEl('notificationMessage').value=n.message||'';
+}
 
 // ===== REPORT CENTER =====
 let selectedReport='history';
