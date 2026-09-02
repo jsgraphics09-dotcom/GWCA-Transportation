@@ -682,6 +682,25 @@ button{cursor:pointer}
   <div class="quickItem" onclick="quickParentMessage()" style="cursor:pointer"><span>✉</span> Parent Message</div>
 </div>
 </div>
+<div id="notificationModal" class="modal" style="display:none">
+  <div class="modalCard" style="max-width:720px">
+    <div class="modalHeader"><h3 id="notificationModalTitle">Parent Notification</h3><button onclick="closeNotificationModal()">×</button></div>
+    <div class="modalBody">
+      <input type="hidden" id="notificationEditId">
+      <div class="changeFields">
+        <div><label>Student ID</label><input id="notificationStudentId" placeholder="Scan or enter Student ID" oninput="loadNotificationScholar()"></div>
+        <div><label>Scholar</label><input id="notificationScholarName" readonly></div>
+        <div><label>Parent / Guardian</label><input id="notificationParentName"></div>
+        <div><label>Parent Email</label><input id="notificationParentEmail" type="email"></div>
+        <div><label>Parent Phone</label><input id="notificationParentPhone"></div>
+        <div><label>Message Type</label><select id="notificationType"><option>General Transportation</option><option>Morning Pickup</option><option>School Arrival</option><option>Afternoon Boarding</option><option>Bus Drop-Off</option><option>Transportation Change</option></select></div>
+        <div class="full"><label>Subject</label><input id="notificationSubject"></div>
+        <div class="full"><label>Message</label><textarea id="notificationMessage" style="min-height:140px"></textarea></div>
+      </div>
+    </div>
+    <div class="modalFooter"><button class="secondaryBtn" onclick="closeNotificationModal()">Cancel</button><button class="cta" onclick="saveManualNotification()">Save to Queue</button></div>
+  </div>
+</div>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script>
 const pages=['Dashboard','Staff & Roles','Scan Center','Scholars','Buses & Routes','Stop Finder','Daily Changes','Parent Notifications','Live Manifests','Reports & History','Administration'];
@@ -1676,25 +1695,7 @@ async function resetTodayBoarding(){
   }
 }
 function printManifest(bus){let r=manifestForBus(bus),w=window.open('','_blank');w.document.write(`<html><head><title>${escapeHtml(bus)} Manifest</title><style>body{font-family:Arial;padding:28px;color:#14213d}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:8px;text-align:left}th{background:#eee}</style></head><body><h1>GWCA Transportation</h1><h2>${escapeHtml(bus)} — ${new Date().toLocaleDateString()}</h2><table><tr><th>#</th><th>Scholar</th><th>Grade</th><th>Stop</th><th>Status</th></tr>${r.map((x,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(scholarName(x.s))}</td><td>${escapeHtml(x.s.grade||'')}</td><td>${escapeHtml(x.eff.stop||'')}</td><td>${x.boarded?'BOARDED':'WAITING'}</td></tr>`).join('')}</table>
-<div id="notificationModal" class="modal" style="display:none">
-  <div class="modalCard" style="max-width:720px">
-    <div class="modalHeader"><h3 id="notificationModalTitle">Parent Notification</h3><button onclick="closeNotificationModal()">×</button></div>
-    <div class="modalBody">
-      <input type="hidden" id="notificationEditId">
-      <div class="changeFields">
-        <div><label>Student ID</label><input id="notificationStudentId" placeholder="Scan or enter Student ID" oninput="loadNotificationScholar()"></div>
-        <div><label>Scholar</label><input id="notificationScholarName" readonly></div>
-        <div><label>Parent / Guardian</label><input id="notificationParentName"></div>
-        <div><label>Parent Email</label><input id="notificationParentEmail" type="email"></div>
-        <div><label>Parent Phone</label><input id="notificationParentPhone"></div>
-        <div><label>Message Type</label><select id="notificationType"><option>General Transportation</option><option>Morning Pickup</option><option>School Arrival</option><option>Afternoon Boarding</option><option>Bus Drop-Off</option><option>Transportation Change</option></select></div>
-        <div class="full"><label>Subject</label><input id="notificationSubject"></div>
-        <div class="full"><label>Message</label><textarea id="notificationMessage" style="min-height:140px"></textarea></div>
-      </div>
-    </div>
-    <div class="modalFooter"><button class="secondaryBtn" onclick="closeNotificationModal()">Cancel</button><button class="cta" onclick="saveManualNotification()">Save to Queue</button></div>
-  </div>
-</div>
+
 
 
 
