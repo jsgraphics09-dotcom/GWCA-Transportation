@@ -894,29 +894,6 @@ async function resizeStudentPhotoForCloud(file){
   if(!blob)throw new Error('Could not resize '+file.name);
   return blob;
 }
-async function verifyStudentPhotoStorageReady(){
-  const {data:{session}}=await withTimeout(window.gwcaSupabase.auth.getSession(),10000,'Checking your sign-in');
-  if(!session)throw new Error('Your session has expired. Sign out and sign back in.');
-  const probe=new Blob(['GWCA'],{type:'text/plain'});
-  const probePath=`_system_check_${session.user.id}.txt`;
-  const result=await withTimeout(
-    window.gwcaSupabase.storage.from(GWCA_STUDENT_PHOTO_BUCKET)
-      .upload(probePath,probe,{contentType:'text/plain',upsert:true}),
-    15000,
-    'Connecting to the student photo storage bucket'
-  );
-  if(result.error){
-    const msg=result.error.message||String(result.error);
-    if(/mime|content.?type|not allowed/i.test(msg)){
-      // Bucket exists and responded; the probe file type is intentionally not an allowed photo type.
-      return true;
-    }
-    throw result.error;
-  }
-  window.gwcaSupabase.storage.from(GWCA_STUDENT_PHOTO_BUCKET).remove([probePath]).catch(()=>{});
-  return true;
-}
-
 async function uploadBulkStudentPhotos(){
   if(!window.gwcaCloudReady){alert('Sign in to the shared system first.');return}
   if(!['admin','transportation_staff'].includes(currentTransportRole())){
@@ -929,22 +906,10 @@ async function uploadBulkStudentPhotos(){
   const btn=document.getElementById('bulkPhotoUploadBtn');
   const progress=document.getElementById('bulkPhotoProgress');
   btn.disabled=true;
-  btn.textContent='Checking Storage…';
+  btn.textContent='Uploading…';
 
   let ok=0,failed=0;
-
-  try{
-    progress.textContent='Checking connection to Supabase Student Photos storage…';
-    await verifyStudentPhotoStorageReady();
-  }catch(e){
-    console.error('Student photo storage check failed:',e);
-    progress.innerHTML=`<span style="color:#a92323"><b>Upload could not start.</b> ${escapeHtml(e.message||String(e))}</span>`;
-    btn.disabled=false;
-    btn.textContent='Upload Matched Photos';
-    return;
-  }
-
-  btn.textContent='Uploading…';
+  progress.textContent=`Starting upload of ${matched.length} matched photo${matched.length===1?'':'s'}…`;
 
   for(let i=0;i<matched.length;i++){
     const row=matched[i];
@@ -992,7 +957,10 @@ async function uploadBulkStudentPhotos(){
       ok++;
     }catch(e){
       console.error('Photo upload failed',row.file.name,e);
-      row.status='Failed: '+(e.message||String(e));
+      let msg=e.message||String(e);
+      if(/bucket.*not found|not found.*bucket/i.test(msg))msg=`Storage bucket "${GWCA_STUDENT_PHOTO_BUCKET}" was not found. Run the Phase 5 Student Photos SQL in Supabase.`;
+      else if(/row-level security|rls|policy|unauthorized|forbidden|permission/i.test(msg))msg='Supabase Storage permission blocked this upload. Re-run the Phase 5 Student Photos SQL.';
+      row.status='Failed: '+msg;
       failed++;
     }
 
