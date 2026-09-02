@@ -252,7 +252,7 @@ button{cursor:pointer}
             <div><h2 class="sectionTitle">Transportation Scan Center</h2><p class="sectionLead">Track the complete scholar transportation cycle with barcode verification and timestamps.</p></div>
             <div style="font-size:10px;color:var(--muted);background:#f5f8fc;border:1px solid var(--line);padding:8px 12px;border-radius:9px"><b>Daily Flow:</b> Morning Pickup → School Arrival → Afternoon Boarding → Bus Drop-Off</div>
           </div>
-          <div class="formrow"><select id="mode" onchange="renderScanSummary();setTimeout(()=>barcode.focus(),50)"><option>Morning Pickup</option><option>School Arrival</option><option>Afternoon Boarding</option><option>Bus Drop-Off</option></select><select id="scanBus" onchange="renderScanSummary();setTimeout(()=>barcode.focus(),50)"><option>Blue Bus</option><option>Red Bus</option><option>Yellow Bus</option></select></div>
+          <div class="formrow"><select id="mode" onchange="renderScanSummary();setTimeout(()=>document.getElementById('barcode')?.focus(),50)"><option>Morning Pickup</option><option>School Arrival</option><option>Afternoon Boarding</option><option>Bus Drop-Off</option></select><select id="scanBus" onchange="renderScanSummary();setTimeout(()=>document.getElementById('barcode')?.focus(),50)"><option>Blue Bus</option><option>Red Bus</option><option>Yellow Bus</option></select></div>
           <div class="rosterStats" style="margin-top:14px"><div class="miniStat"><b id="scanModeCount">0</b><span>Scanned This Mode</span></div><div class="miniStat"><b id="scanBusCount">0</b><span>This Bus</span></div><div class="miniStat"><b id="scanTodayTotal">0</b><span>Total Scans Today</span></div><div class="miniStat"><b id="scanUnique">0</b><span>Unique Scholars</span></div></div>
         </div>
         <div class="bigscan"><div class="scanShell"><div class="scanVisual">▥</div><h2 id="scanPromptTitle">SCAN STUDENT ID</h2><div class="scanHint" id="scanPromptHint">Use the barcode scanner or type the Student ID manually.</div><input id="barcode" autofocus placeholder="Scan barcode or enter Student ID" onkeydown="if(event.key==='Enter')scan()"><button class="cta" style="margin-top:12px;width:180px" onclick="scan()">SCAN SCHOLAR</button><div class="result" id="result"></div></div></div>
@@ -850,6 +850,12 @@ button{cursor:pointer}
 const pages=['Dashboard','Staff & Roles','Scan Center','Scholars','Buses & Routes','Stop Finder','Daily Changes','Parent Notifications','Live Manifests','Reports & History','Administration'];
 const icons=['⌂','👥','▥','👤','🚌','📍','↔','✉','☷','▤','⚙'];
 const nav=document.getElementById('nav');
+(function bindGwcaDomGlobals(){
+  document.querySelectorAll('[id]').forEach(el=>{
+    const id=el.id;
+    if(/^[A-Za-z_$][\w$]*$/.test(id)){try{window[id]=el}catch(e){}}
+  });
+})();
 pages.forEach((p,i)=>{
   let b=document.createElement('button');
   b.innerHTML=`<span class="navIcon">${icons[i]}</span><span>${p}</span>`;
@@ -883,7 +889,7 @@ function show(p){
   if(titleEl)titleEl.textContent=p.toUpperCase();
   if(subEl)subEl.textContent=p==='Dashboard'?"Live overview of today's transportation activity":'GWCA Transportation Hub';
   if(p==='Dashboard')renderCommandCenter();
-  if(p==='Scan Center'){renderScanSummary();renderRecentScans();setTimeout(()=>barcode.focus(),50)}
+  if(p==='Scan Center'){renderScanSummary();renderRecentScans();setTimeout(()=>document.getElementById('barcode')?.focus(),50)}
   if(p==='Daily Changes')renderDailyChanges();
   if(p==='Live Manifests')renderLiveManifests();
   if(p==='Reports & History'){refreshReportBusFilter();renderSelectedReport()}
@@ -895,36 +901,24 @@ function show(p){
 function quickFindScholar(){
   show('Scholars');
   setTimeout(()=>{
-    const el=document.getElementById('rosterSearch')
-      || document.getElementById('scholarSearch')
-      || document.querySelector('#Scholars input[type="search"]')
-      || document.querySelector('#Scholars input[placeholder*="Search" i]');
-    if(el){el.focus();el.select?.();}
+    const el=document.getElementById('search');
+    if(el){el.focus();el.select?.()}
   },80);
 }
 function quickDailyAttendanceReport(){
   show('Reports & History');
   setTimeout(()=>{
-    const reportSelect=document.getElementById('reportType');
-    if(reportSelect){
-      const option=[...reportSelect.options].find(o=>/daily|attendance/i.test(o.textContent||o.value));
-      if(option){reportSelect.value=option.value;reportSelect.dispatchEvent(new Event('change'));}
-    }
+    if(typeof selectReport==='function')selectReport('daily');
+    document.getElementById('historyTable')?.scrollIntoView({behavior:'smooth',block:'start'});
   },80);
 }
 function quickPrintManifests(){
   show('Live Manifests');
-  setTimeout(()=>{
-    const printBtn=[...document.querySelectorAll('#Live\\ Manifests button')].find(b=>/print/i.test(b.textContent||''));
-    if(printBtn)printBtn.scrollIntoView({behavior:'smooth',block:'center'});
-  },80);
+  if(typeof printAllManifests==='function')printAllManifests();
 }
 function quickParentMessage(){
   show('Parent Notifications');
-  setTimeout(()=>{
-    const queue=document.getElementById('notificationQueue');
-    if(queue)queue.scrollIntoView({behavior:'smooth',block:'start'});
-  },80);
+  setTimeout(()=>openManualNotification(),50);
 }
 
 function updateClock(){const d=new Date(),dateEl=document.getElementById('todayDate'),timeEl=document.getElementById('todayTime');if(dateEl)dateEl.textContent=d.toLocaleDateString([], {weekday:'long',month:'long',day:'numeric',year:'numeric'});if(timeEl)timeEl.textContent=d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});}updateClock();setInterval(updateClock,30000);
@@ -972,7 +966,7 @@ function scan(){
   let id=barcode.value.trim(),entry=Object.entries(scholars).find(([sid,s])=>sid===id||String(s.barcodeId||'')===id),s=entry&&entry[1],scanMode=document.getElementById('mode').value,selected=scanBus.value;
   result.style.display='block';
   if(!id){result.style.background='#fff8e7';result.innerHTML='<b>Scan or enter a Student ID.</b>';return}
-  if(!s){result.style.background='#fff8e7';result.style.borderColor='#f0dfab';result.innerHTML='<h2>⚠ NO SCHOLAR FOUND</h2><p>Student ID '+escapeHtml(id)+' is not in the transportation roster.</p>';barcode.value='';setTimeout(()=>barcode.focus(),50);return}
+  if(!s){result.style.background='#fff8e7';result.style.borderColor='#f0dfab';result.innerHTML='<h2>⚠ NO SCHOLAR FOUND</h2><p>Student ID '+escapeHtml(id)+' is not in the transportation roster.</p>';barcode.value='';setTimeout(()=>document.getElementById('barcode')?.focus(),50);return}
   let assignment=expectedAssignmentForMode(s,scanMode),busOK=assignment.rides&&assignment.bus===selected;
   let identity=`<div class="scanScholarCard">${scholarPhotoHtml(s)}<div><div class="scanScholarName">${escapeHtml(scholarName(s))}</div><div class="scanMeta">Grade ${escapeHtml(s.grade||'—')} • Student ID ${escapeHtml(s.studentId||entry[0])}</div>${assignment.rides?`<div class="scanBusStopBox"><div class="stopLabel">ASSIGNED BUS</div><div class="busName">${escapeHtml(assignment.bus||'—')}</div><div class="stopLabel">BUS STOP</div><div class="stopName">${escapeHtml(assignment.stop||'No stop assigned')}</div></div>`:''}</div></div>`;
   if(!assignment.rides){
@@ -984,7 +978,7 @@ function scan(){
     if(rec.duplicate){result.style.background='#fff8e7';result.style.borderColor='#f0dfab';result.innerHTML=`${identity}<h2 style="color:#9a6800;margin-top:16px">⚠ ALREADY SCANNED</h2><p>This scholar was already recorded for ${escapeHtml(scanMode)} today${rec.event?.time?' at '+escapeHtml(rec.event.time):''}.</p>`}
     else{result.style.background='#edf9f1';result.style.borderColor='#c9ebd5';let action=scanMode==='Morning Pickup'?'MORNING PICKUP RECORDED':scanMode==='School Arrival'?'SCHOOL ARRIVAL RECORDED':scanMode==='Afternoon Boarding'?'AFTERNOON BOARDING RECORDED':'BUS DROP-OFF RECORDED';result.innerHTML=`${identity}<div style="margin-top:16px;padding:14px;border-radius:11px;background:#daf3e3;text-align:center"><div style="font-size:20px;font-weight:900;color:#1f8b4c">✓ ${action}</div><div style="font-size:12px;color:#4c6657;margin-top:4px">${escapeHtml(rec.event.time)}</div></div>`}
   }
-  barcode.value='';setTimeout(()=>barcode.focus(),50)
+  barcode.value='';setTimeout(()=>document.getElementById('barcode')?.focus(),50)
 }
 
 const GWCA_STUDENT_PHOTO_BUCKET='student-photos';
@@ -1256,10 +1250,10 @@ function handleScholarPhoto(ev){
 }
 function removeScholarPhoto(){fPhotoData.value='';if(fPhoto)fPhoto.value='';updateScholarPhotoPreview('')}
 
-function openScholarEditor(data=null){scholarEditor.classList.remove('hidden');editorTitle.textContent=data?'Edit Scholar':'Add Scholar';let s=data||{};originalStudentId.value=s.studentId||'';fStudentId.value=s.studentId||'';fBarcodeId.value=s.barcodeId||'';fFirstName.value=s.firstName||'';fLastName.value=s.lastName||'';fGrade.value=s.grade||'';fTeacher.value=s.teacher||'';fStatus.value=s.status||'Active';fBus.value=s.bus||'';populateStopSelect(s.stop||'');fAM.value=s.am||'Bus Rider';fPM.value=s.pm||'Bus Rider';fPhotoData.value=s.photoData||'';if(fPhoto)fPhoto.value='';updateScholarPhotoPreview(s.photoData||'');fParentName.value=s.parentName||'';fParentPhone.value=s.parentPhone||'';fParentEmail.value=s.parentEmail||'';fAddress.value=s.address||'';scholarEditor.scrollIntoView({behavior:'smooth',block:'nearest'})}
+function openScholarEditor(data=null){scholarEditor.classList.remove('hidden');editorTitle.textContent=data?'Edit Scholar':'Add Scholar';let s=data||{};originalStudentId.value=s.studentId||'';fStudentId.value=s.studentId||'';fBarcodeId.value=s.barcodeId||'';fFirstName.value=s.firstName||'';fLastName.value=s.lastName||'';fGrade.value=s.grade||'';fTeacher.value=s.teacher||'';fStatus.value=s.status||'Active';fBus.value=s.bus||'';populateStopSelect(s.stop||'');fAM.value=s.am||'Bus Rider';fPM.value=s.pm||'Bus Rider';fPhotoData.value=s.photoData||'';if(fPhoto)fPhoto.value='';updateScholarPhotoPreview(s.photoUrl||s.photoData||'');fParentName.value=s.parentName||'';fParentPhone.value=s.parentPhone||'';fParentEmail.value=s.parentEmail||'';fAddress.value=s.address||'';scholarEditor.scrollIntoView({behavior:'smooth',block:'nearest'})}
 function closeScholarEditor(){scholarEditor.classList.add('hidden')}
 function populateStopSelect(selected=''){let bus=(fBus.value||'').replace(' Bus','');let arr=stops[bus]||[];fStop.innerHTML='<option value="">'+(arr.length?'Select approved stop':'Select a bus first')+'</option>'+arr.map(x=>`<option ${x===selected?'selected':''}>${escapeHtml(x)}</option>`).join('')}
-function saveScholar(){let id=fStudentId.value.trim();if(!id){alert('Student ID is required.');fStudentId.focus();return}let old=originalStudentId.value.trim();if(!old&&scholars[id]&&!confirm('A scholar with this Student ID already exists. Update that record?'))return;let obj={studentId:id,barcodeId:fBarcodeId.value.trim()||id,firstName:fFirstName.value.trim(),lastName:fLastName.value.trim(),grade:fGrade.value.trim(),teacher:fTeacher.value.trim(),status:fStatus.value,bus:fBus.value,stop:fStop.value,am:fAM.value,pm:fPM.value,parentName:fParentName.value.trim(),parentPhone:fParentPhone.value.trim(),parentEmail:fParentEmail.value.trim(),address:fAddress.value.trim(),photoData:fPhotoData.value||((old&&scholars[old])?scholars[old].photoData:'')||''};obj.name=scholarName(obj);if(old&&old!==id)delete scholars[old];scholars[id]=obj;persistScholars();closeScholarEditor()}
+function saveScholar(){let id=fStudentId.value.trim();if(!id){alert('Student ID is required.');fStudentId.focus();return}let old=originalStudentId.value.trim();if(!old&&scholars[id]&&!confirm('A scholar with this Student ID already exists. Update that record?'))return;let obj={studentId:id,barcodeId:fBarcodeId.value.trim()||id,firstName:fFirstName.value.trim(),lastName:fLastName.value.trim(),grade:fGrade.value.trim(),teacher:fTeacher.value.trim(),status:fStatus.value,bus:fBus.value,stop:fStop.value,am:fAM.value,pm:fPM.value,parentName:fParentName.value.trim(),parentPhone:fParentPhone.value.trim(),parentEmail:fParentEmail.value.trim(),address:fAddress.value.trim(),photoData:fPhotoData.value||((old&&scholars[old])?scholars[old].photoData:'')||'',photoUrl:((old&&scholars[old])?scholars[old].photoUrl:(scholars[id]?.photoUrl||''))||''};obj.name=scholarName(obj);if(old&&old!==id)delete scholars[old];scholars[id]=obj;persistScholars();if(old&&old!==id&&window.gwcaCloudReady){window.gwcaSupabase.from('scholars').delete().eq('student_id',String(old)).then(({error})=>{if(error)console.error('Old Student ID cleanup failed',error)})}closeScholarEditor()}
 function editScholar(id){let s=scholars[id];if(s)openScholarEditor(s)}
 async function deleteScholar(id){
   let s=scholars[id];
@@ -1838,7 +1832,20 @@ async function resetTodayBoarding(){
     if(error)console.error('Cloud boarding reset failed',error);
   }
 }
-function printManifest(bus){let r=manifestForBus(bus),w=window.open('','_blank');w.document.write(`<html><head><title>${escapeHtml(bus)} Manifest</title><style>body{font-family:Arial;padding:28px;color:#14213d}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:8px;text-align:left}th{background:#eee}</style></head><body><h1>GWCA Transportation</h1><h2>${escapeHtml(bus)} — ${new Date().toLocaleDateString()}</h2><table><tr><th>#</th><th>Scholar</th><th>Grade</th><th>Stop</th><th>Status</th></tr>${r.map((x,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(scholarName(x.s))}</td><td>${escapeHtml(x.s.grade||'')}</td><td>${escapeHtml(x.eff.stop||'')}</td><td>${x.boarded?'BOARDED':'WAITING'}</td></tr>`).join('')}</table>
+function printAllManifests(){
+  const active=routeData.filter(b=>b.active!==false);
+  if(!active.length){alert('There are no active buses to print.');return}
+  const w=window.open('','_blank');
+  if(!w){alert('The print window was blocked. Allow pop-ups for this site and try again.');return}
+  const sections=active.map((b,bi)=>{
+    const r=manifestForBus(b.name);
+    return `<section class="${bi?'pageBreak':''}"><h2>${escapeHtml(b.name)} — ${new Date().toLocaleDateString()}</h2><div>${r.filter(x=>x.boarded).length} of ${r.length} boarded</div><table><tr><th>#</th><th>Scholar</th><th>Grade</th><th>Stop</th><th>Status</th></tr>${r.map((x,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(scholarName(x.s))}</td><td>${escapeHtml(x.s.grade||'')}</td><td>${escapeHtml(x.eff.stop||'')}</td><td>${x.boarded?'BOARDED':'WAITING'}</td></tr>`).join('')||'<tr><td colspan="5">No scholars expected on this bus today.</td></tr>'}</table></section>`;
+  }).join('');
+  w.document.write(`<html><head><title>GWCA Transportation Manifests</title><style>body{font-family:Arial;padding:28px;color:#14213d}table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #bbb;padding:8px;text-align:left}th{background:#eee}.pageBreak{break-before:page;page-break-before:always}</style></head><body><h1>GWCA Transportation — Daily Manifests</h1>${sections}</body></html>`);
+  w.document.close();
+  setTimeout(()=>w.print(),300);
+}
+function printManifest(bus){let r=manifestForBus(bus),w=window.open('','_blank');if(!w){alert('The print window was blocked. Allow pop-ups for this site and try again.');return}w.document.write(`<html><head><title>${escapeHtml(bus)} Manifest</title><style>body{font-family:Arial;padding:28px;color:#14213d}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bbb;padding:8px;text-align:left}th{background:#eee}</style></head><body><h1>GWCA Transportation</h1><h2>${escapeHtml(bus)} — ${new Date().toLocaleDateString()}</h2><table><tr><th>#</th><th>Scholar</th><th>Grade</th><th>Stop</th><th>Status</th></tr>${r.map((x,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(scholarName(x.s))}</td><td>${escapeHtml(x.s.grade||'')}</td><td>${escapeHtml(x.eff.stop||'')}</td><td>${x.boarded?'BOARDED':'WAITING'}</td></tr>`).join('')}</table>
 
 
 
@@ -1849,7 +1856,7 @@ function printManifest(bus){let r=manifestForBus(bus),w=window.open('','_blank')
 
 function renderScanSummary(){let m=document.getElementById('mode')?.value||'Morning Pickup',b=document.getElementById('scanBus')?.value||'',d=getLocalDateKey(),events=loadBoardingLog().filter(x=>x.date===d),modeEvents=events.filter(x=>x.mode===m),busEvents=modeEvents.filter(x=>x.bus===b);if(scanModeCount)scanModeCount.textContent=modeEvents.length;if(scanBusCount)scanBusCount.textContent=busEvents.length;if(scanTodayTotal)scanTodayTotal.textContent=events.length;if(scanUnique)scanUnique.textContent=new Set(events.map(x=>String(x.studentId))).size;let labels={'Morning Pickup':'MORNING PICKUP','School Arrival':'SCHOOL ARRIVAL','Afternoon Boarding':'AFTERNOON BOARDING','Bus Drop-Off':'BUS DROP-OFF'};if(scanPromptTitle)scanPromptTitle.textContent='SCAN FOR '+(labels[m]||m.toUpperCase());if(scanPromptHint)scanPromptHint.textContent=`Scanning ${b}. Use the barcode scanner or type the Student ID manually.`}
 function renderRecentScans(){let el=document.getElementById('recentScanTable');if(!el)return;let d=getLocalDateKey(),a=loadBoardingLog().filter(x=>x.date===d).sort((x,y)=>String(y.timestamp||y.time).localeCompare(String(x.timestamp||x.time))).slice(0,10);el.innerHTML=a.length?`<table><thead><tr><th>TIME</th><th>SCHOLAR</th><th>SCAN TYPE</th><th>BUS</th><th>STOP</th></tr></thead><tbody>${a.map(x=>`<tr><td>${escapeHtml(x.time||'')}</td><td><b>${escapeHtml(x.scholar||'')}</b><div style="font-size:10px;color:var(--muted)">ID ${escapeHtml(x.studentId||'')}</div></td><td>${escapeHtml(x.mode||'')}</td><td>${escapeHtml(x.bus||'—')}</td><td>${escapeHtml(x.stop||'—')}</td></tr>`).join('')}</tbody></table>`:'<div class="emptyState">No transportation scans recorded today.</div>'}
-function clearHistoryFilters(){if(historySearch)historySearch.value='';if(historyDate)historyDate.value='';if(historyMode)historyMode.value='';renderTravelHistory()}
+function clearTravelHistoryFiltersLegacy(){const q=document.getElementById('historySearch'),d=document.getElementById('historyDate'),m=document.getElementById('historyMode');if(q)q.value='';if(d)d.value='';if(m)m.value='';renderTravelHistory()}
 function filteredTravelEvents(){let q=(document.getElementById('historySearch')?.value||'').toLowerCase().trim(),date=document.getElementById('historyDate')?.value||'',m=document.getElementById('historyMode')?.value||'';return loadBoardingLog().filter(x=>(!date||x.date===date)&&(!m||x.mode===m)&&(!q||[x.scholar,x.studentId,x.bus,x.stop,x.mode].join(' ').toLowerCase().includes(q))).sort((a,b)=>String(b.timestamp||`${b.date} ${b.time}`).localeCompare(String(a.timestamp||`${a.date} ${a.time}`)))}
 function renderTravelHistory(){renderTravelHistoryEnhanced()}
 function exportTravelHistoryCSV(){let a=filteredTravelEvents();if(!a.length){alert('No scan history matches the current filters.');return}let rows=[['Date','Time','Student ID','Scholar','Grade','Scan Type','Bus','Stop','Source'],...a.map(x=>[x.date,x.time,x.studentId,x.scholar,x.grade||'',x.mode,x.bus,x.stop,x.source||'Scanner'])];let csv=rows.map(r=>r.map(v=>'"'+String(v??'').replace(/"/g,'""')+'"').join(',')).join('\n'),blob=new Blob([csv],{type:'text/csv'}),url=URL.createObjectURL(blob),aEl=document.createElement('a');aEl.href=url;aEl.download='GWCA_Transportation_Scan_History.csv';aEl.click();URL.revokeObjectURL(url)}
@@ -1998,18 +2005,29 @@ function saveNotifications(a){
 function defaultNotificationSettings(){return{morning:false,arrival:true,boarding:true,dropoff:true,changes:true}}
 function getNotificationSettings(){try{return {...defaultNotificationSettings(),...JSON.parse(localStorage.getItem(NOTIF_SETTINGS_KEY)||'{}')}}catch(e){return defaultNotificationSettings()}}
 function saveNotificationSettings(){
-  let s={morning:!!notifyMorning.checked,arrival:!!notifyArrival.checked,boarding:!!notifyBoarding.checked,dropoff:!!notifyDropoff.checked,changes:!!notifyChanges.checked};
+  const morning=document.getElementById('notifyMorning'),
+        arrival=document.getElementById('notifyArrival'),
+        boarding=document.getElementById('notifyBoarding'),
+        dropoff=document.getElementById('notifyDropoff'),
+        changes=document.getElementById('notifyChanges');
+  let s={morning:!!morning?.checked,arrival:!!arrival?.checked,boarding:!!boarding?.checked,dropoff:!!dropoff?.checked,changes:!!changes?.checked};
   localStorage.setItem(NOTIF_SETTINGS_KEY,JSON.stringify(s));
   if(window.gwcaCloudReady)cloudSaveAppSetting('notification_settings',s);
 }
 function loadNotificationSettings(){
   let s=getNotificationSettings();
-  if(document.getElementById('notifyMorning'))notifyMorning.checked=s.morning;
-  if(document.getElementById('notifyArrival'))notifyArrival.checked=s.arrival;
-  if(document.getElementById('notifyBoarding'))notifyBoarding.checked=s.boarding;
-  if(document.getElementById('notifyDropoff'))notifyDropoff.checked=s.dropoff;
-  if(document.getElementById('notifyChanges'))notifyChanges.checked=s.changes;
+  const morning=document.getElementById('notifyMorning'),
+        arrival=document.getElementById('notifyArrival'),
+        boarding=document.getElementById('notifyBoarding'),
+        dropoff=document.getElementById('notifyDropoff'),
+        changes=document.getElementById('notifyChanges');
+  if(morning)morning.checked=s.morning;
+  if(arrival)arrival.checked=s.arrival;
+  if(boarding)boarding.checked=s.boarding;
+  if(dropoff)dropoff.checked=s.dropoff;
+  if(changes)changes.checked=s.changes;
 }
+
 function openNotificationSettings(){show('Parent Notifications');setTimeout(()=>document.getElementById('notifyMorning')?.scrollIntoView({behavior:'smooth',block:'center'}),100)}
 function parentEmailForScholar(s){return s.parentEmail||s.email||''}
 function parentPhoneForScholar(s){return s.parentPhone||s.phone||''}
@@ -2221,7 +2239,21 @@ async function deleteNotification(id){
     if(error)alert('Notification was removed locally, but the shared delete failed: '+error.message);
   }
 }
-function clearSentNotifications(){if(!confirm('Clear all notifications marked Sent?'))return;saveNotifications(loadNotifications().filter(n=>n.status!=='Sent'))}
+async function clearSentNotifications(){
+  const all=loadNotifications(),sentIds=all.filter(n=>n.status==='Sent').map(n=>String(n.id));
+  if(!sentIds.length){alert('There are no sent notifications to clear.');return}
+  if(!confirm(`Clear ${sentIds.length} notification${sentIds.length===1?'':'s'} marked Sent?`))return;
+  const next=all.filter(n=>n.status!=='Sent');
+  localStorage.setItem(NOTIF_KEY,JSON.stringify(next));
+  renderNotifications();
+  if(window.gwcaCloudReady){
+    const {error}=await window.gwcaSupabase.from('parent_notifications').delete().in('id',sentIds);
+    if(error){
+      console.error('Cloud clear-sent failed',error);
+      alert('Sent notifications were cleared locally, but the shared database cleanup failed: '+error.message);
+    }
+  }
+}
 function notifEl(id){return document.getElementById(id)}
 function openManualNotification(){
   const modal=notifEl('notificationModal');
@@ -2375,7 +2407,7 @@ function renderChangesReport(){
   setReportStats(a.length,new Set(a.map(c=>c.studentId)).size,a.filter(c=>c.status==='Cancelled').length,a.filter(c=>c.confirmed==='Yes').length,'Changes','Scholars','Cancelled','Parent Confirmed');
   historyTable.innerHTML=a.length?`<table class="rosterTable"><thead><tr><th>DATE</th><th>SCHOLAR</th><th>CHANGE</th><th>TEMP BUS / STOP</th><th>PARENT</th><th>STATUS</th></tr></thead><tbody>${a.map(c=>`<tr><td>${escapeHtml(c.date||'')}</td><td><b>${escapeHtml(c.scholar||'')}</b><div style="font-size:10px;color:var(--muted)">ID ${escapeHtml(c.studentId||'')}</div></td><td>${escapeHtml(c.type||'')}<div style="font-size:10px;color:var(--muted)">${escapeHtml(c.notes||'')}</div></td><td>${escapeHtml(c.bus||'—')}<div style="font-size:10px;color:var(--muted)">${escapeHtml(c.stop||'')}</div></td><td>${escapeHtml(c.confirmed||'—')}</td><td>${escapeHtml(c.status||'Active')}</td></tr>`).join('')}</tbody></table>`:'<div class="emptyState">No transportation changes match these filters.</div>';
 }
-function clearHistoryFilters(){historySearch.value='';historyDate.value='';historyMode.value='';if(reportBusFilter)reportBusFilter.value='';renderSelectedReport()}
+function clearHistoryFilters(){const q=document.getElementById('historySearch'),d=document.getElementById('historyDate'),m=document.getElementById('historyMode'),b=document.getElementById('reportBusFilter');if(q)q.value='';if(d)d.value='';if(m)m.value='';if(b)b.value='';renderSelectedReport()}
 function printCurrentReport(){
   let title={history:'Transportation Scan History',daily:'Daily Operations Report',bus:'Bus Ridership Report',scholar:'Scholar Transportation History',changes:'Daily Transportation Changes'}[selectedReport];
   let content=historyTable.innerHTML,w=window.open('','_blank');
