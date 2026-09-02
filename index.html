@@ -864,67 +864,147 @@ function renderBulkPhotoPreview(){
     </tr>`).join('')
   }</tbody></table>`;
 }
+function withTimeout(promise,ms,label='Operation'){
+  return Promise.race([
+    promise,
+    new Promise((_,reject)=>setTimeout(()=>reject(new Error(label+' timed out after '+Math.round(ms/1000)+' seconds.')),ms))
+  ]);
+}
 async function resizeStudentPhotoForCloud(file){
-  const data=await new Promise((resolve,reject)=>{
+  const data=await withTimeout(new Promise((resolve,reject)=>{
     const reader=new FileReader();
     reader.onload=()=>resolve(reader.result);
-    reader.onerror=reject;
+    reader.onerror=()=>reject(new Error('Could not read '+file.name));
     reader.readAsDataURL(file);
-  });
-  const img=await new Promise((resolve,reject)=>{
-    const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=data;
-  });
+  }),15000,'Reading '+file.name);
+
+  const img=await withTimeout(new Promise((resolve,reject)=>{
+    const im=new Image();
+    im.onload=()=>resolve(im);
+    im.onerror=()=>reject(new Error('Could not open '+file.name));
+    im.src=data;
+  }),15000,'Opening '+file.name);
+
   const max=700;
   const scale=Math.min(1,max/Math.max(img.width,img.height));
   const w=Math.max(1,Math.round(img.width*scale)),h=Math.max(1,Math.round(img.height*scale));
   const c=document.createElement('canvas');c.width=w;c.height=h;
   c.getContext('2d').drawImage(img,0,0,w,h);
-  const blob=await new Promise(resolve=>c.toBlob(resolve,'image/jpeg',0.82));
+  const blob=await withTimeout(new Promise(resolve=>c.toBlob(resolve,'image/jpeg',0.82)),15000,'Resizing '+file.name);
   if(!blob)throw new Error('Could not resize '+file.name);
   return blob;
 }
+async function verifyStudentPhotoStorageReady(){
+  const {data:{session}}=await withTimeout(window.gwcaSupabase.auth.getSession(),10000,'Checking your sign-in');
+  if(!session)throw new Error('Your session has expired. Sign out and sign back in.');
+  const probe=new Blob(['GWCA'],{type:'text/plain'});
+  const probePath=`_system_check_${session.user.id}.txt`;
+  const result=await withTimeout(
+    window.gwcaSupabase.storage.from(GWCA_STUDENT_PHOTO_BUCKET)
+      .upload(probePath,probe,{contentType:'text/plain',upsert:true}),
+    15000,
+    'Connecting to the student photo storage bucket'
+  );
+  if(result.error){
+    const msg=result.error.message||String(result.error);
+    if(/mime|content.?type|not allowed/i.test(msg)){
+      // Bucket exists and responded; the probe file type is intentionally not an allowed photo type.
+      return true;
+    }
+    throw result.error;
+  }
+  window.gwcaSupabase.storage.from(GWCA_STUDENT_PHOTO_BUCKET).remove([probePath]).catch(()=>{});
+  return true;
+}
+
 async function uploadBulkStudentPhotos(){
   if(!window.gwcaCloudReady){alert('Sign in to the shared system first.');return}
   if(!['admin','transportation_staff'].includes(currentTransportRole())){
     alert('Administrator or Transportation Staff access is required to upload student photos.');return;
   }
+
   const matched=stagedBulkStudentPhotos.filter(r=>r.scholar);
   if(!matched.length){alert('No photos are matched to Student IDs.');return}
+
   const btn=document.getElementById('bulkPhotoUploadBtn');
   const progress=document.getElementById('bulkPhotoProgress');
   btn.disabled=true;
+  btn.textContent='Checking Storage…';
+
   let ok=0,failed=0;
+
+  try{
+    progress.textContent='Checking connection to Supabase Student Photos storage…';
+    await verifyStudentPhotoStorageReady();
+  }catch(e){
+    console.error('Student photo storage check failed:',e);
+    progress.innerHTML=`<span style="color:#a92323"><b>Upload could not start.</b> ${escapeHtml(e.message||String(e))}</span>`;
+    btn.disabled=false;
+    btn.textContent='Upload Matched Photos';
+    return;
+  }
+
+  btn.textContent='Uploading…';
+
   for(let i=0;i<matched.length;i++){
     const row=matched[i];
     try{
-      progress.textContent=`Uploading ${i+1} of ${matched.length}: ${row.file.name}`;
+      row.status='Preparing';
+      renderBulkPhotoPreview();
+      progress.textContent=`${i+1} of ${matched.length} • Preparing ${row.file.name}`;
+
       const blob=await resizeStudentPhotoForCloud(row.file);
+
+      row.status='Uploading';
+      renderBulkPhotoPreview();
+      progress.textContent=`${i+1} of ${matched.length} • Uploading ${row.file.name}`;
+
       const objectPath=`${row.studentId}.jpg`;
-      const {error:uploadError}=await window.gwcaSupabase.storage.from(GWCA_STUDENT_PHOTO_BUCKET)
-        .upload(objectPath,blob,{contentType:'image/jpeg',upsert:true,cacheControl:'3600'});
-      if(uploadError)throw uploadError;
+      const uploadResult=await withTimeout(
+        window.gwcaSupabase.storage.from(GWCA_STUDENT_PHOTO_BUCKET)
+          .upload(objectPath,blob,{contentType:'image/jpeg',upsert:true,cacheControl:'3600'}),
+        25000,
+        'Uploading '+row.file.name
+      );
+      if(uploadResult.error)throw uploadResult.error;
+
       const {data:urlData}=window.gwcaSupabase.storage.from(GWCA_STUDENT_PHOTO_BUCKET).getPublicUrl(objectPath);
       const photoUrl=urlData?.publicUrl?`${urlData.publicUrl}?v=${Date.now()}`:'';
       if(!photoUrl)throw new Error('Photo URL was not created.');
+
+      row.status='Saving Scholar';
+      renderBulkPhotoPreview();
+      progress.textContent=`${i+1} of ${matched.length} • Linking photo to Student ID ${row.studentId}`;
+
       const s=scholars[row.studentId];
       s.photoUrl=photoUrl;
       s.photoData='';
       scholars[row.studentId]=s;
-      const {error:dbError}=await window.gwcaSupabase.from('scholars').upsert(cloudScholarRow(s),{onConflict:'student_id'});
-      if(dbError)throw dbError;
-      row.status='Uploaded';ok++;
+
+      const dbResult=await withTimeout(
+        window.gwcaSupabase.from('scholars').upsert(cloudScholarRow(s),{onConflict:'student_id'}),
+        20000,
+        'Saving Student ID '+row.studentId
+      );
+      if(dbResult.error)throw dbResult.error;
+
+      row.status='Uploaded';
+      ok++;
     }catch(e){
       console.error('Photo upload failed',row.file.name,e);
-      row.status='Failed: '+(e.message||String(e));failed++;
+      row.status='Failed: '+(e.message||String(e));
+      failed++;
     }
-  }
-  saveScholars(scholars);
-  renderRoster();
-  renderBulkPhotoPreview();
-  progress.textContent=`Complete — ${ok} uploaded${failed?` • ${failed} failed`:''}.`;
-  btn.disabled=false;
-}
 
+    saveScholars(scholars);
+    renderRoster();
+    renderBulkPhotoPreview();
+  }
+
+  progress.innerHTML=`<b>Complete.</b> ${ok} uploaded${failed?` • <span style="color:#a92323">${failed} failed</span>`:''}.`;
+  btn.disabled=false;
+  btn.textContent=failed?'Retry / Upload Matched Photos':'Upload Matched Photos';
+}
 function renderRoster(){if(!document.getElementById('rosterBody'))return;let q=(document.getElementById('search')?.value||'').trim().toLowerCase();let bf=document.getElementById('rosterBusFilter')?.value||'';let rows=Object.values(scholars).filter(s=>{let hay=[scholarName(s),s.studentId,s.barcodeId,s.grade,s.bus,s.stop,s.teacher].join(' ').toLowerCase();let busOK=!bf||(bf==='Unassigned'?!s.bus:s.bus===bf);return hay.includes(q)&&busOK}).sort((a,b)=>scholarName(a).localeCompare(scholarName(b)));document.getElementById('rosterBody').innerHTML=rows.length?rows.map(s=>{let bc=(s.bus||'').toLowerCase().split(' ')[0];return `<tr><td><div style="display:flex;align-items:center;gap:9px">${(s.photoUrl||s.photoData)?`<img src="${s.photoUrl||s.photoData}" alt="" style="width:34px;height:34px;border-radius:8px;object-fit:cover">`:`<div style="width:34px;height:34px;border-radius:8px;background:#e9eef5;display:grid;place-items:center">👤</div>`}<div><b>${escapeHtml(scholarName(s))}</b><div style="font-size:9px;color:var(--muted);margin-top:2px">${escapeHtml(s.teacher||'')}</div></div></div></td><td>${escapeHtml(s.grade||'—')}</td><td>${escapeHtml(s.studentId||'')}</td><td>${escapeHtml(s.am||'—')}</td><td>${escapeHtml(s.pm||'—')}</td><td>${s.bus?`<span class="busChip ${bc}">${escapeHtml(s.bus)}</span>`:'<span class="pill orange">Unassigned</span>'}</td><td>${escapeHtml(s.stop||'—')}</td><td><span class="pill ${s.status==='Inactive'?'statusInactive':'statusActive'}">${escapeHtml(s.status||'Active')}</span></td><td><div class="rowActions"><button class="tinyBtn" onclick="editScholar('${jsQuote(s.studentId)}')">Edit</button><button class="dangerBtn" onclick="deleteScholar('${jsQuote(s.studentId)}')">Delete</button></div></td></tr>`}).join(''):`<tr><td colspan="9"><div class="emptyState">No scholars match this search.</div></td></tr>`;updateScholarMetrics()}
 function updateScholarMetrics(){let a=Object.values(scholars),rt=document.getElementById('rosterTotal'),ra=document.getElementById('rosterAssigned'),ru=document.getElementById('rosterUnassigned'),rv=document.getElementById('rosterActive');if(rt)rt.textContent=a.length;if(ra)ra.textContent=a.filter(s=>s.bus).length;if(ru)ru.textContent=a.filter(s=>!s.bus).length;if(rv)rv.textContent=a.filter(s=>(s.status||'Active')==='Active').length;let metric=document.querySelector('.metric:nth-child(2) .metricValue');if(metric)metric.textContent=a.length}
 
