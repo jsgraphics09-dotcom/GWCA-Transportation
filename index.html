@@ -950,6 +950,40 @@ async function uploadStudentPhotoViaREST(studentId,blob,onStage){
   }
 }
 
+
+async function linkStudentPhotoViaREST(s,onStage){
+  if(onStage)onStage('Checking signed-in session for scholar update…');
+  const sessionResult=await withTimeout(window.gwcaSupabase.auth.getSession(),8000,'Checking session for scholar update');
+  const session=sessionResult?.data?.session;
+  if(sessionResult?.error)throw sessionResult.error;
+  if(!session)throw new Error('Your sign-in session expired before the scholar record could be updated.');
+
+  if(onStage)onStage('Saving photo link to scholar record…');
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),12000);
+  try{
+    const endpoint=`${GWCA_SUPABASE_URL}/rest/v1/scholars?student_id=eq.${encodeURIComponent(String(s.studentId))}`;
+    const response=await fetch(endpoint,{
+      method:'PATCH',
+      headers:{
+        'Authorization':'Bearer '+session.access_token,
+        'apikey':GWCA_SUPABASE_PUBLISHABLE_KEY,
+        'Content-Type':'application/json',
+        'Prefer':'return=minimal'
+      },
+      body:JSON.stringify({data:s}),
+      signal:controller.signal,
+      cache:'no-store'
+    });
+    if(onStage)onStage(`Scholar database responded HTTP ${response.status}`);
+    if(!response.ok)throw new Error(`Scholar database HTTP ${response.status}`);
+    return true;
+  }catch(e){
+    if(e?.name==='AbortError')throw new Error('Scholar database update timed out after 12 seconds.');
+    throw e;
+  }finally{clearTimeout(timer)}
+}
+
 async function uploadBulkStudentPhotos(){
   if(!window.gwcaCloudReady){alert('Sign in to the shared system first.');return}
   if(!['admin','transportation_staff'].includes(currentTransportRole())){
@@ -996,12 +1030,13 @@ async function uploadBulkStudentPhotos(){
       s.photoData='';
       scholars[row.studentId]=s;
 
-      const dbResult=await withTimeout(
-        window.gwcaSupabase.from('scholars').upsert(cloudScholarRow(s),{onConflict:'student_id'}),
-        20000,
-        'Saving Student ID '+row.studentId
-      );
-      if(dbResult.error)throw dbResult.error;
+      // Save locally immediately so the successful Storage upload is never lost.
+      localStorage.setItem('gwcaTransportationScholars',JSON.stringify(scholars));
+      renderRoster();
+
+      await linkStudentPhotoViaREST(s,(stage)=>{
+        progress.textContent=`${i+1} of ${matched.length} • ${stage}`;
+      });
 
       row.status='Uploaded';
       ok++;
@@ -1012,12 +1047,14 @@ async function uploadBulkStudentPhotos(){
       else if(/HTTP 401|HTTP 403|row-level security|rls|policy|unauthorized|forbidden|permission/i.test(msg))msg='Supabase Storage permission blocked this upload. Make sure you are signed in and the student-photos INSERT policy allows authenticated users.';
       else if(/HTTP 400/i.test(msg))msg='Supabase rejected this new photo request with HTTP 400. The app used a fresh filename, so this is no longer an overwrite conflict.';
       else if(/sign-in session.*timed out|Checking your Supabase sign-in/i.test(msg))msg='The Supabase sign-in session lookup timed out. Sign out of GWCA Transportation, sign back in, and try again.';
-      else if(/Storage upload timed out|timed out/i.test(msg))msg='Supabase Storage did not respond before the timeout.';
+      else if(/Scholar database HTTP 401|Scholar database HTTP 403/i.test(msg))msg='The photo uploaded, but the scholar database permission blocked saving the photo link.';
+      else if(/Scholar database update timed out/i.test(msg))msg='The photo uploaded, but saving the photo link to the scholar record timed out.';
+      else if(/Storage upload timed out|timed out/i.test(msg))msg='Supabase did not respond before the timeout.';
       row.status='Failed: '+msg;
       failed++;
     }
 
-    saveScholars(scholars);
+    localStorage.setItem('gwcaTransportationScholars',JSON.stringify(scholars));
     renderRoster();
     renderBulkPhotoPreview();
   }
