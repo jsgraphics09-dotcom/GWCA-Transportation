@@ -138,10 +138,69 @@ overflow:hidden}
 
 
 .dailyGrid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(340px,.85fr);gap:18px;margin-top:18px}.changeFormCard,.changeListCard{background:#fff;border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow);padding:20px}.changeFormCard h3,.changeListCard h3{margin:0 0 5px;font-size:15px;color:#142c4b}.changeFormCard p,.changeListCard p{margin:0 0 16px;font-size:10px;color:var(--muted)}.changeFields{display:grid;grid-template-columns:1fr 1fr;gap:12px}.changeFields .full{grid-column:1/-1}.changeFields label{display:block;font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#617085;margin-bottom:5px}.changeFields input,.changeFields select,.changeFields textarea{width:100%;border:1px solid #d8e1eb;background:#fbfcfe;border-radius:10px;padding:10px 11px;color:var(--text);outline:none}.changeFields textarea{min-height:78px;resize:vertical}.changeFields input:focus,.changeFields select:focus,.changeFields textarea:focus{border-color:#8bb4dd;box-shadow:0 0 0 3px rgba(20,103,215,.08)}.changePreview{display:none;margin-top:14px;padding:13px;border-radius:12px;background:#f6f9fd;border:1px solid #e1e8f1;font-size:11px;line-height:1.5}.changePreview.show{display:block}.changeActions{display:flex;gap:9px;justify-content:flex-end;margin-top:14px}.changeToolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px}.changeToolbar input,.changeToolbar select{border:1px solid #d8e1eb;border-radius:9px;padding:8px 9px;background:#fff}.changeList{display:flex;flex-direction:column;gap:9px;max-height:560px;overflow:auto;padding-right:2px}.changeItem{border:1px solid #e2e8ef;border-radius:13px;padding:12px;background:#fff}.changeItemTop{display:flex;gap:10px;align-items:flex-start}.changeAvatar{width:37px;height:37px;border-radius:10px;background:#edf2f7;display:grid;place-items:center;font-weight:900;color:#24496f;flex:none}.changeWho{flex:1}.changeWho b{font-size:12px;color:#16304e}.changeWho small{display:block;color:#758297;font-size:9px;margin-top:2px}.changeBadge{font-size:8px;font-weight:900;letter-spacing:.04em;text-transform:uppercase;padding:5px 7px;border-radius:999px;background:#fff2e7;color:#a94c00}.changeDetails{margin-top:9px;padding-top:9px;border-top:1px solid #edf1f5;font-size:10px;color:#475a70;line-height:1.55}.changeDetails b{color:#1c3553}.changeItemActions{display:flex;justify-content:flex-end;gap:7px;margin-top:9px}.emptyChanges{border:1px dashed #cfd9e5;border-radius:13px;padding:24px;text-align:center;color:#788698;font-size:10px}.todayChangeBanner{background:#fff8eb;border:1px solid #f1ddad;color:#76510b;padding:12px 14px;border-radius:12px;margin:0 0 14px;font-size:10px}.todayChangeBanner b{color:#4f3400}@media(max-width:1050px){.dailyGrid{grid-template-columns:1fr}}@media(max-width:700px){.changeFields{grid-template-columns:1fr}.changeFields .full{grid-column:auto}}
+
+/* Leaflet layout safety net */
+.leaflet-container{position:relative;overflow:hidden;outline:0}
+.leaflet-pane,.leaflet-tile,.leaflet-marker-icon,.leaflet-marker-shadow,
+.leaflet-tile-container,.leaflet-pane>svg,.leaflet-pane>canvas,
+.leaflet-zoom-box{position:absolute;left:0;top:0}
+.leaflet-map-pane,.leaflet-tile-pane,.leaflet-overlay-pane,.leaflet-shadow-pane,
+.leaflet-marker-pane,.leaflet-tooltip-pane,.leaflet-popup-pane{position:absolute;left:0;top:0}
+.leaflet-tile{visibility:hidden}
+.leaflet-tile-loaded{visibility:inherit}
+.leaflet-zoom-animated{transform-origin:0 0}
+.leaflet-marker-icon,.leaflet-marker-shadow{display:block}
+.leaflet-container .leaflet-overlay-pane svg{max-width:none!important;max-height:none!important}
+.leaflet-container .leaflet-marker-pane img,.leaflet-container .leaflet-shadow-pane img,
+.leaflet-container .leaflet-tile-pane img,.leaflet-container img.leaflet-image-layer,
+.leaflet-container .leaflet-tile{max-width:none!important;max-height:none!important;width:auto;height:auto}
+.leaflet-container.leaflet-touch-zoom{touch-action:pan-x pan-y}
+.leaflet-control{position:relative;z-index:800;pointer-events:auto}
+.leaflet-top,.leaflet-bottom{position:absolute;z-index:1000;pointer-events:none}
+.leaflet-top{top:0}.leaflet-right{right:0}.leaflet-bottom{bottom:0}.leaflet-left{left:0}
+.leaflet-control-zoom{margin:10px}
+.leaflet-control-zoom a{display:block;width:30px;height:30px;line-height:30px;text-align:center;background:#fff;color:#222;text-decoration:none;border-bottom:1px solid #ccc}
+.leaflet-control-attribution{background:rgba(255,255,255,.8);font-size:9px;padding:2px 5px}
+
 </style>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
- integrity="sha256-p4NxAoJBhIINfQ3yn7nvX6niMzHP9bf6+LZBfR2m77A="
- crossorigin="">
+<link id="leafletCssPrimary" rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+<script>
+(function(){
+  function leafletCssLooksLoaded(){
+    try{
+      const probe=document.createElement('div');
+      probe.className='leaflet-container';
+      probe.style.position='absolute';
+      probe.style.left='-9999px';
+      document.body.appendChild(probe);
+      const pos=getComputedStyle(probe).position;
+      probe.remove();
+      return pos==='relative';
+    }catch(e){return false}
+  }
+  window.ensureLeafletCss=function(){
+    if(leafletCssLooksLoaded()) return Promise.resolve(true);
+    return new Promise(resolve=>{
+      let existing=document.getElementById('leafletCssFallback');
+      if(existing){
+        existing.addEventListener('load',()=>resolve(true),{once:true});
+        setTimeout(()=>resolve(leafletCssLooksLoaded()),1500);
+        return;
+      }
+      const link=document.createElement('link');
+      link.id='leafletCssFallback';
+      link.rel='stylesheet';
+      link.href='https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css';
+      link.onload=()=>resolve(true);
+      link.onerror=()=>resolve(false);
+      document.head.appendChild(link);
+      setTimeout(()=>resolve(leafletCssLooksLoaded()),1800);
+    });
+  };
+})();
+</script>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
@@ -437,7 +496,7 @@ overflow:hidden}
             <div id="finderStatus" class="stopFinderStatus"></div>
             <div id="suggestedStopsMapWrap" class="finderMapWrap">
               <div class="finderMapHead">
-                <div><b>Suggested Stops Map</b><small>Home address and the closest approved GWCA stops. <b>Map v2</b></small></div>
+                <div><b>Suggested Stops Map</b><small>Home address and the closest approved GWCA stops. <b>Map v3 CSS Fix</b></small></div>
                 <div class="finderMapLegend">
                   <span class="finderLegendItem"><span class="finderLegendDot" style="background:#10284a"></span>Home</span>
                   <span class="finderLegendItem"><span class="finderLegendDot" style="background:#f4bf22"></span>Yellow Bus</span>
@@ -1860,9 +1919,10 @@ function renderFallbackSuggestedMap(home,ranked){
   mapEl.innerHTML=`<div class="finderFallbackMap">${pins}<div class="finderMapLoading">Loading street map…</div></div>`;
 }
 async function upgradeToLeafletMap(home,ranked){
+  const cssOk=window.ensureLeafletCss?await window.ensureLeafletCss():true;
   const ok=await ensureLeafletLoaded();
   const mapEl=document.getElementById('suggestedStopsMap');
-  if(!ok||!mapEl)return;
+  if(!ok||!cssOk||!mapEl)return;
   try{
     mapEl.innerHTML='';
     const homeLat=Number(home.lat),homeLon=Number(home.lon);
