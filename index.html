@@ -894,6 +894,50 @@ async function resizeStudentPhotoForCloud(file){
   if(!blob)throw new Error('Could not resize '+file.name);
   return blob;
 }
+
+async function uploadStudentPhotoViaREST(studentId,blob){
+  const {data:{session},error:sessionError}=await window.gwcaSupabase.auth.getSession();
+  if(sessionError)throw sessionError;
+  if(!session)throw new Error('Your sign-in session has expired. Sign out and sign back in.');
+
+  const controller=new AbortController();
+  const timer=setTimeout(()=>controller.abort(),20000);
+  const objectPath=`${studentId}.jpg`;
+  const endpoint=`${GWCA_SUPABASE_URL}/storage/v1/object/${encodeURIComponent(GWCA_STUDENT_PHOTO_BUCKET)}/${encodeURIComponent(objectPath)}`;
+
+  try{
+    const response=await fetch(endpoint,{
+      method:'POST',
+      headers:{
+        'Authorization':'Bearer '+session.access_token,
+        'apikey':GWCA_SUPABASE_PUBLISHABLE_KEY,
+        'Content-Type':'image/jpeg',
+        'x-upsert':'true',
+        'cache-control':'3600'
+      },
+      body:blob,
+      signal:controller.signal
+    });
+
+    const bodyText=await response.text();
+    if(!response.ok){
+      let detail=bodyText;
+      try{
+        const parsed=JSON.parse(bodyText);
+        detail=parsed.message||parsed.error||parsed.statusCode||bodyText;
+      }catch(_){}
+      throw new Error(`Storage HTTP ${response.status}: ${detail||response.statusText}`);
+    }
+
+    return objectPath;
+  }catch(e){
+    if(e && e.name==='AbortError')throw new Error('Storage upload timed out after 20 seconds.');
+    throw e;
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
 async function uploadBulkStudentPhotos(){
   if(!window.gwcaCloudReady){alert('Sign in to the shared system first.');return}
   if(!['admin','transportation_staff'].includes(currentTransportRole())){
@@ -922,19 +966,11 @@ async function uploadBulkStudentPhotos(){
 
       row.status='Uploading';
       renderBulkPhotoPreview();
-      progress.textContent=`${i+1} of ${matched.length} • Uploading ${row.file.name}`;
+      progress.textContent=`${i+1} of ${matched.length} • Sending ${row.file.name} to Supabase Storage…`;
 
-      const objectPath=`${row.studentId}.jpg`;
-      const uploadResult=await withTimeout(
-        window.gwcaSupabase.storage.from(GWCA_STUDENT_PHOTO_BUCKET)
-          .upload(objectPath,blob,{contentType:'image/jpeg',upsert:true,cacheControl:'3600'}),
-        25000,
-        'Uploading '+row.file.name
-      );
-      if(uploadResult.error)throw uploadResult.error;
+      const objectPath=await uploadStudentPhotoViaREST(row.studentId,blob);
 
-      const {data:urlData}=window.gwcaSupabase.storage.from(GWCA_STUDENT_PHOTO_BUCKET).getPublicUrl(objectPath);
-      const photoUrl=urlData?.publicUrl?`${urlData.publicUrl}?v=${Date.now()}`:'';
+      const photoUrl=`${GWCA_SUPABASE_URL}/storage/v1/object/public/${encodeURIComponent(GWCA_STUDENT_PHOTO_BUCKET)}/${encodeURIComponent(objectPath)}?v=${Date.now()}`;
       if(!photoUrl)throw new Error('Photo URL was not created.');
 
       row.status='Saving Scholar';
@@ -958,8 +994,9 @@ async function uploadBulkStudentPhotos(){
     }catch(e){
       console.error('Photo upload failed',row.file.name,e);
       let msg=e.message||String(e);
-      if(/bucket.*not found|not found.*bucket/i.test(msg))msg=`Storage bucket "${GWCA_STUDENT_PHOTO_BUCKET}" was not found. Run the Phase 5 Student Photos SQL in Supabase.`;
-      else if(/row-level security|rls|policy|unauthorized|forbidden|permission/i.test(msg))msg='Supabase Storage permission blocked this upload. Re-run the Phase 5 Student Photos SQL.';
+      if(/HTTP 404|bucket.*not found|not found.*bucket/i.test(msg))msg=`Storage bucket "${GWCA_STUDENT_PHOTO_BUCKET}" was not found. Run the Phase 5 Student Photos SQL in Supabase.`;
+      else if(/HTTP 401|HTTP 403|row-level security|rls|policy|unauthorized|forbidden|permission/i.test(msg))msg='Supabase Storage permission blocked this upload. Re-run the Phase 5 Student Photos SQL and make sure you are signed in as Administrator or Transportation Staff.';
+      else if(/timed out/i.test(msg))msg='Supabase Storage did not respond within 20 seconds. Check the browser connection and Supabase Storage status.';
       row.status='Failed: '+msg;
       failed++;
     }
