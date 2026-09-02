@@ -1704,24 +1704,50 @@ function wait(ms){return new Promise(r=>setTimeout(r,ms))}
 async function prepareStopLocations(force=false){let list=finderActiveList(),targets=force?list:list.filter(x=>!Number.isFinite(Number(x.stop.lat))||!Number.isFinite(Number(x.stop.lon)));if(!targets.length){setFinderStatus('✓ All active stops already have map locations saved.','success');updateFinderStats();return}let btn=document.getElementById('prepareStopsBtn');btn.disabled=true;coordProgressWrap.style.display='block';let done=0,found=0;for(let x of targets){coordProgressText.textContent=`Locating ${x.bus.name} — ${x.stop.name} (${done+1} of ${targets.length})`;coordProgressBar.style.width=Math.round(done/targets.length*100)+'%';try{let g=await geocodeStop(x.stop);if(g){x.stop.lat=g.lat;x.stop.lon=g.lon;x.stop.geocodeLabel=g.display;x.stop.geocodeVersion=4;x.stop.locationVerified=false;found++}}catch(e){console.warn('Stop geocode failed',x.stop.name,e)}done++;coordProgressBar.style.width=Math.round(done/targets.length*100)+'%';if(done<targets.length)await wait(1050)}localStorage.setItem('gwca_transport_routes',JSON.stringify(routeData));rebuildStops();renderRoutes();refreshBusSelectors();updateFinderStats();if(window.gwcaCloudReady)cloudSyncRoutes();btn.disabled=false;coordProgressText.textContent=`Finished: ${found} of ${targets.length} stop location(s) found.`;setFinderStatus(found?`✓ Stop location setup finished. ${found} stop location(s) were added or refreshed.`:'No stop locations could be found automatically. You can enter latitude/longitude manually when editing a stop.',found?'success':'error')}
 function milesBetween(a,b){let R=3958.7613,toRad=d=>d*Math.PI/180,dLat=toRad(b.lat-a.lat),dLon=toRad(b.lon-a.lon),la1=toRad(a.lat),la2=toRad(b.lat);let h=Math.sin(dLat/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dLon/2)**2;return 2*R*Math.asin(Math.sqrt(h))}
 async function roadDistancesFromHome(home,mapped){
-  // OSRM road table: one home source, all GWCA stops as destinations.
-  let coords=[`${home.lon},${home.lat}`,...mapped.map(x=>`${Number(x.stop.lon)},${Number(x.stop.lat)}`)].join(';');
-  let dests=mapped.map((_,i)=>i+1).join(';');
+  // Road routing is done only for the geographically closest candidates.
+  // This keeps the public routing request small and much more reliable.
+  const MAX_ROAD_CANDIDATES=10;
+  let candidates=[...mapped]
+    .map(x=>({...x,_direct:milesBetween(home,{lat:Number(x.stop.lat),lon:Number(x.stop.lon)})}))
+    .sort((a,b)=>a._direct-b._direct)
+    .slice(0,MAX_ROAD_CANDIDATES);
+
+  let coords=[`${home.lon},${home.lat}`,...candidates.map(x=>`${Number(x.stop.lon)},${Number(x.stop.lat)}`)].join(';');
+  let dests=candidates.map((_,i)=>i+1).join(';');
   const {data:{session}}=await window.gwcaSupabase.auth.getSession();
   if(!session)throw new Error('Please sign in before using Stop Finder.');
+
   let url=GWCA_SUPABASE_URL+`/functions/v1/transport-map/route?coords=${encodeURIComponent(coords)}&sources=0&destinations=${encodeURIComponent(dests)}&annotations=distance,duration`;
-  let r=await fetch(url,{headers:{Authorization:'Bearer '+session.access_token,apikey:GWCA_SUPABASE_PUBLISHABLE_KEY}});
-  if(!r.ok)throw new Error('Road-distance service unavailable');
-  let data=await r.json();
-  if(data.code!=='Ok'||!data.distances?.[0])throw new Error('Road-distance service returned no route');
-  return mapped.map((x,i)=>{
-    let meters=data.distances[0][i],seconds=data.durations?.[0]?.[i];
+  let controller=new AbortController();
+  let timeout=setTimeout(()=>controller.abort(),18000);
+  let r;
+  try{
+    r=await fetch(url,{
+      headers:{Authorization:'Bearer '+session.access_token,apikey:GWCA_SUPABASE_PUBLISHABLE_KEY},
+      signal:controller.signal
+    });
+  }catch(e){
+    if(e?.name==='AbortError')throw new Error('Road-distance request timed out');
+    throw e;
+  }finally{
+    clearTimeout(timeout);
+  }
+
+  let data={};
+  try{data=await r.json()}catch(e){}
+  if(!r.ok)throw new Error(data?.error||`Road-distance service returned HTTP ${r.status}`);
+  if(data.code!=='Ok'||!Array.isArray(data.distances?.[0])){
+    throw new Error(data?.message||data?.error||'Road-distance service returned no route');
+  }
+
+  return candidates.map((x,i)=>{
+    let meters=Number(data.distances[0][i]),seconds=Number(data.durations?.[0]?.[i]);
     return {...x,
       distance:Number.isFinite(meters)?meters/1609.344:null,
       duration:Number.isFinite(seconds)?seconds:null,
       distanceMethod:'road'
     };
-  });
+  }).filter(x=>Number.isFinite(x.distance));
 }
 function formatDriveTime(seconds){
   if(!Number.isFinite(seconds))return '';
@@ -1781,13 +1807,15 @@ async function findStop(){
       <div style="font-size:9px;color:var(--muted);padding:0 2px 10px">Home located as: ${escapeHtml(home.display)}</div>
       <div class="stopResultActions">
         <button class="secondaryBtn" onclick="openMapToStop('${x.stop.lat}','${x.stop.lon}')">View Stop Map</button>
-        <button class="cta" onclick="assignFinderStop('${jsQuote(x.bus.id)}','${jsQuote(x.stop.id)}')">Assign This Stop</button>
+        ${x.distanceMethod==='road'
+          ?`<button class="cta" onclick="assignFinderStop('${jsQuote(x.bus.id)}','${jsQuote(x.stop.id)}')">Assign This Stop</button>`
+          :`<button class="secondaryBtn" onclick="assignApproxFinderStop('${jsQuote(x.bus.id)}','${jsQuote(x.stop.id)}')">Verify / Assign</button>`}
       </div>
     </div>`).join('');
 
     setFinderStatus(method==='road'
       ?'✓ Closest approved GWCA stops found by estimated driving distance.'
-      :'✓ Closest approved GWCA stops found. Road routing was unavailable, so approximate direct distance was used.',
+      :'⚠ Road routing could not be completed. These results use approximate direct distance and should be verified before assignment.',
       'success');
   }catch(e){
     setFinderStatus('⚠ '+escapeHtml(e.message||'Unable to complete the stop search.'),'error')
@@ -1798,6 +1826,12 @@ async function findStop(){
 function openMapToStop(lat,lon){window.open(`https://www.openstreetmap.org/?mlat=${encodeURIComponent(lat)}&mlon=${encodeURIComponent(lon)}#map=17/${encodeURIComponent(lat)}/${encodeURIComponent(lon)}`,'_blank')}
 function getFinderScholar(){let id=(document.getElementById('finderStudentId')?.value||'').trim();if(!id)return null;let entry=Object.entries(scholars).find(([sid,s])=>sid===id||String(s.barcodeId||'')===id);return entry?entry[1]:null}
 function loadScholarAddressForFinder(){let s=getFinderScholar();if(!s){finderScholarName.textContent='Scholar not found. Check the Student ID or barcode.';return}finderScholarName.textContent=`${scholarName(s)} • Grade ${s.grade||'—'}`;if(s.address){address.value=s.address;findStop()}else setFinderStatus(`${escapeHtml(scholarName(s))} does not have a home address saved yet.`,'error')}
+function assignApproxFinderStop(busId,stopId){
+  let b=routeData.find(x=>x.id===busId),st=b?.stops.find(x=>x.id===stopId);
+  if(!b||!st)return;
+  if(!confirm(`This result is based on approximate direct distance, not driving distance.\n\nVerify that ${st.name} is the appropriate approved stop before assigning.\n\nContinue with assignment?`))return;
+  assignFinderStop(busId,stopId);
+}
 function assignFinderStop(busId,stopId){let s=getFinderScholar();if(!s){setFinderStatus('Enter the scholar’s Student ID on the right before assigning a stop.','error');finderStudentId.focus();return}let b=routeData.find(x=>x.id===busId),st=b?.stops.find(x=>x.id===stopId);if(!b||!st)return;let label=st.name+(st.landmark?' — '+st.landmark:'');if(!confirm(`Assign ${scholarName(s)} to ${b.name} — ${label}?`))return;s.bus=b.name;s.stop=label;persistScholars();finderScholarName.textContent=`${scholarName(s)} • Assigned to ${b.name} — ${st.name}`;setFinderStatus(`✓ ${escapeHtml(scholarName(s))} is now assigned to ${escapeHtml(b.name)} — ${escapeHtml(st.name)}.`,'success')}
 
 const CHANGE_KEY='gwca_transport_daily_changes';
