@@ -682,7 +682,151 @@ button{cursor:pointer}
   <div class="quickItem" onclick="quickParentMessage()" style="cursor:pointer"><span>✉</span> Parent Message</div>
 </div>
 </div>
-<div id="notificationModal" class="modal" style="display:none">
+
+<style id="gwca-notification-modal-fix">
+#notificationModal.modal{
+  position:fixed !important;
+  inset:0 !important;
+  width:100vw !important;
+  height:100vh !important;
+  z-index:99999 !important;
+  background:rgba(7,27,48,.58) !important;
+  align-items:center !important;
+  justify-content:center !important;
+  padding:24px !important;
+  box-sizing:border-box !important;
+  overflow-y:auto !important;
+}
+#notificationModal .modalCard{
+  width:min(720px, calc(100vw - 48px)) !important;
+  max-height:calc(100vh - 48px) !important;
+  overflow:hidden !important;
+  background:#fff !important;
+  border-radius:18px !important;
+  box-shadow:0 24px 70px rgba(0,0,0,.28) !important;
+  margin:auto !important;
+  display:flex !important;
+  flex-direction:column !important;
+}
+#notificationModal .modalHeader{
+  display:flex !important;
+  align-items:center !important;
+  justify-content:space-between !important;
+  gap:18px !important;
+  padding:20px 24px !important;
+  border-bottom:1px solid #e5e7eb !important;
+  flex:0 0 auto !important;
+}
+#notificationModal .modalHeader h3{
+  margin:0 !important;
+  color:#10284a !important;
+  font-size:22px !important;
+}
+#notificationModal .modalHeader button{
+  width:38px !important;
+  height:38px !important;
+  border:0 !important;
+  border-radius:10px !important;
+  background:#f2f4f7 !important;
+  color:#10284a !important;
+  font-size:26px !important;
+  line-height:1 !important;
+  cursor:pointer !important;
+}
+#notificationModal .modalBody{
+  padding:22px 24px !important;
+  overflow-y:auto !important;
+  flex:1 1 auto !important;
+}
+#notificationModal .changeFields{
+  display:grid !important;
+  grid-template-columns:1fr 1fr !important;
+  gap:16px 18px !important;
+}
+#notificationModal .changeFields > div{
+  min-width:0 !important;
+}
+#notificationModal .changeFields .full{
+  grid-column:1 / -1 !important;
+}
+#notificationModal label{
+  display:block !important;
+  margin:0 0 7px !important;
+  font-size:12px !important;
+  font-weight:800 !important;
+  letter-spacing:.04em !important;
+  text-transform:uppercase !important;
+  color:#52657d !important;
+}
+#notificationModal input,
+#notificationModal select,
+#notificationModal textarea{
+  width:100% !important;
+  box-sizing:border-box !important;
+  border:1px solid #cfd8e3 !important;
+  border-radius:10px !important;
+  background:#fff !important;
+  color:#10284a !important;
+  padding:11px 12px !important;
+  font:inherit !important;
+}
+#notificationModal input:focus,
+#notificationModal select:focus,
+#notificationModal textarea:focus{
+  outline:2px solid rgba(255,126,24,.28) !important;
+  border-color:#ff7e18 !important;
+}
+#notificationModal input[readonly]{
+  background:#f7f9fc !important;
+}
+#notificationModal .modalFooter{
+  display:flex !important;
+  justify-content:flex-end !important;
+  gap:10px !important;
+  padding:16px 24px 20px !important;
+  border-top:1px solid #e5e7eb !important;
+  background:#fff !important;
+  flex:0 0 auto !important;
+}
+#notificationModal .modalFooter button{
+  min-height:42px !important;
+  border-radius:10px !important;
+  padding:0 18px !important;
+  cursor:pointer !important;
+  font-weight:800 !important;
+}
+#notificationModal .modalFooter .secondaryBtn{
+  background:#fff !important;
+  color:#10284a !important;
+  border:1px solid #cfd8e3 !important;
+}
+#notificationModal .modalFooter .cta{
+  background:#ff7e18 !important;
+  color:#fff !important;
+  border:1px solid #ff7e18 !important;
+}
+@media(max-width:700px){
+  #notificationModal.modal{padding:12px !important;}
+  #notificationModal .modalCard{
+    width:calc(100vw - 24px) !important;
+    max-height:calc(100vh - 24px) !important;
+  }
+  #notificationModal .changeFields{
+    grid-template-columns:1fr !important;
+  }
+  #notificationModal .changeFields .full{
+    grid-column:auto !important;
+  }
+  #notificationModal .modalHeader,
+  #notificationModal .modalBody,
+  #notificationModal .modalFooter{
+    padding-left:16px !important;
+    padding-right:16px !important;
+  }
+}
+</style>
+
+<div id="notificationModal" class="modal" style="display:none" onclick="if(event.target===this)closeNotificationModal()">
   <div class="modalCard" style="max-width:720px">
     <div class="modalHeader"><h3 id="notificationModalTitle">Parent Notification</h3><button onclick="closeNotificationModal()">×</button></div>
     <div class="modalBody">
@@ -2083,6 +2227,7 @@ function openManualNotification(){
   const modal=notifEl('notificationModal');
   if(!modal){alert('The parent notification form could not be opened. Please refresh the page.');return}
   modal.style.display='flex';
+  document.body.style.overflow='hidden';
   notifEl('notificationModalTitle').textContent='New Parent Notification';
   notifEl('notificationEditId').value='';
   notifEl('notificationStudentId').value='';
@@ -2098,6 +2243,7 @@ function openManualNotification(){
 function closeNotificationModal(){
   const modal=notifEl('notificationModal');
   if(modal)modal.style.display='none';
+  document.body.style.overflow='';
 }
 function loadNotificationScholar(){
   const id=(notifEl('notificationStudentId')?.value||'').trim();
@@ -2144,6 +2290,7 @@ function editNotification(id){
   const n=notificationById(id);if(!n)return;
   const modal=notifEl('notificationModal');if(!modal)return;
   modal.style.display='flex';
+  document.body.style.overflow='hidden';
   notifEl('notificationModalTitle').textContent='Edit Parent Notification';
   notifEl('notificationEditId').value=n.id||'';
   notifEl('notificationStudentId').value=n.studentId||'';
