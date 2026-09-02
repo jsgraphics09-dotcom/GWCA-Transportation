@@ -267,6 +267,7 @@ button{cursor:pointer}
             <input class="grow" id="search" placeholder="Search name, Student ID, grade, bus, or stop" oninput="renderRoster()">
             <select id="rosterBusFilter" onchange="renderRoster()"><option value="">All Buses</option><option>Red Bus</option><option>Blue Bus</option><option>Yellow Bus</option><option>Unassigned</option></select>
             <button class="cta" onclick="openRosterUploadCenter()">⬆ Upload Roster</button>
+            <button class="secondaryBtn" onclick="openBulkPhotoCenter()">📷 Bulk Student Photos</button>
             <button class="secondaryBtn" onclick="downloadRosterTemplate()">Download Template</button>
             
             <button class="secondaryBtn" onclick="exportRosterCSV()">Export Roster</button>
@@ -274,6 +275,50 @@ button{cursor:pointer}
           </div>
           <div class="helperBox"><b>Roster Upload Center:</b> Upload the school transportation roster using Excel or CSV. Student ID is the required unique field. You can merge/update the current roster or replace it with a new roster.</div>
           <div class="rosterStats"><div class="miniStat"><b id="rosterTotal">0</b><span>Total Scholars</span></div><div class="miniStat"><b id="rosterAssigned">0</b><span>Bus Assigned</span></div><div class="miniStat"><b id="rosterUnassigned">0</b><span>Unassigned</span></div><div class="miniStat"><b id="rosterActive">0</b><span>Active</span></div></div>
+
+          <div id="bulkPhotoCenter" class="editorCard hidden" style="margin-top:16px">
+            <div class="editorHead">
+              <div>
+                <h3 style="margin:0">Bulk Student Photo Manager</h3>
+                <div style="font-size:10px;color:var(--muted);margin-top:4px">Upload many student photos at once. The filename is matched to the scholar's Student ID.</div>
+              </div>
+              <button class="tinyBtn" onclick="closeBulkPhotoCenter()">Close</button>
+            </div>
+
+            <div style="display:grid;grid-template-columns:minmax(280px,.8fr) minmax(380px,1.4fr);gap:18px" class="adminGrid">
+              <div>
+                <div style="border:2px dashed #bac9da;border-radius:14px;padding:22px;text-align:center;background:#f8fbff">
+                  <div style="font-size:36px">📸</div>
+                  <b style="display:block;margin-top:8px">Choose Student Photos</b>
+                  <div style="font-size:10px;color:var(--muted);line-height:1.55;margin:7px 0 13px">
+                    Select an entire batch at once. Name each image with the Student ID, such as <b>4048.jpg</b> or <b>4048.png</b>.
+                  </div>
+                  <input id="bulkPhotoInput" type="file" multiple accept="image/jpeg,image/png,image/webp" onchange="previewBulkStudentPhotos(this.files)" style="width:100%;padding:10px;border:1px solid #c8d4e2;border-radius:10px;background:#fff;font-size:11px">
+                  <button id="bulkPhotoUploadBtn" class="cta" style="width:100%;margin-top:12px" onclick="uploadBulkStudentPhotos()" disabled>Upload Matched Photos</button>
+                  <div id="bulkPhotoProgress" style="font-size:10px;color:var(--muted);line-height:1.5;margin-top:10px">No photos selected.</div>
+                </div>
+
+                <div style="margin-top:14px;padding:12px;border-radius:12px;background:#eef7ff;border:1px solid #c8dff2;font-size:10px;line-height:1.55">
+                  <b>Automatic matching:</b><br>
+                  4048.jpg → Student ID 4048<br>
+                  Student_4048.jpg → Student ID 4048<br>
+                  4048_Mattias.jpg → Student ID 4048<br><br>
+                  Photos are resized before upload to keep the live system fast.
+                </div>
+              </div>
+
+              <div>
+                <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+                  <div>
+                    <b>Photo Match Preview</b>
+                    <div id="bulkPhotoSummary" style="font-size:10px;color:var(--muted);margin-top:3px">Choose photos to see matches before uploading.</div>
+                  </div>
+                </div>
+                <div id="bulkPhotoPreview" style="margin-top:12px;max-height:420px;overflow:auto;border:1px solid var(--border);border-radius:12px"></div>
+              </div>
+            </div>
+          </div>
+
           <div id="rosterUploadCenter" class="editorCard hidden" style="margin-top:16px">
             <div class="editorHead">
               <div><h3 style="margin:0">Roster Upload Center</h3><div style="font-size:10px;color:var(--muted);margin-top:4px">Upload and review the scholar transportation roster before adding it to the system.</div></div>
@@ -770,11 +815,122 @@ function scan(){
   }
   barcode.value='';setTimeout(()=>barcode.focus(),50)
 }
-function renderRoster(){if(!document.getElementById('rosterBody'))return;let q=(document.getElementById('search')?.value||'').trim().toLowerCase();let bf=document.getElementById('rosterBusFilter')?.value||'';let rows=Object.values(scholars).filter(s=>{let hay=[scholarName(s),s.studentId,s.barcodeId,s.grade,s.bus,s.stop,s.teacher].join(' ').toLowerCase();let busOK=!bf||(bf==='Unassigned'?!s.bus:s.bus===bf);return hay.includes(q)&&busOK}).sort((a,b)=>scholarName(a).localeCompare(scholarName(b)));document.getElementById('rosterBody').innerHTML=rows.length?rows.map(s=>{let bc=(s.bus||'').toLowerCase().split(' ')[0];return `<tr><td><div style="display:flex;align-items:center;gap:9px">${s.photoData?`<img src="${s.photoData}" alt="" style="width:34px;height:34px;border-radius:8px;object-fit:cover">`:`<div style="width:34px;height:34px;border-radius:8px;background:#e9eef5;display:grid;place-items:center">👤</div>`}<div><b>${escapeHtml(scholarName(s))}</b><div style="font-size:9px;color:var(--muted);margin-top:2px">${escapeHtml(s.teacher||'')}</div></div></div></td><td>${escapeHtml(s.grade||'—')}</td><td>${escapeHtml(s.studentId||'')}</td><td>${escapeHtml(s.am||'—')}</td><td>${escapeHtml(s.pm||'—')}</td><td>${s.bus?`<span class="busChip ${bc}">${escapeHtml(s.bus)}</span>`:'<span class="pill orange">Unassigned</span>'}</td><td>${escapeHtml(s.stop||'—')}</td><td><span class="pill ${s.status==='Inactive'?'statusInactive':'statusActive'}">${escapeHtml(s.status||'Active')}</span></td><td><div class="rowActions"><button class="tinyBtn" onclick="editScholar('${jsQuote(s.studentId)}')">Edit</button><button class="dangerBtn" onclick="deleteScholar('${jsQuote(s.studentId)}')">Delete</button></div></td></tr>`}).join(''):`<tr><td colspan="9"><div class="emptyState">No scholars match this search.</div></td></tr>`;updateScholarMetrics()}
+
+const GWCA_STUDENT_PHOTO_BUCKET='student-photos';
+let stagedBulkStudentPhotos=[];
+
+function openBulkPhotoCenter(){
+  document.getElementById('bulkPhotoCenter')?.classList.remove('hidden');
+  document.getElementById('rosterUploadCenter')?.classList.add('hidden');
+  setTimeout(()=>document.getElementById('bulkPhotoCenter')?.scrollIntoView({behavior:'smooth',block:'start'}),50);
+}
+function closeBulkPhotoCenter(){
+  document.getElementById('bulkPhotoCenter')?.classList.add('hidden');
+}
+function extractStudentIdFromPhotoName(name){
+  const base=String(name||'').replace(/\.[^.]+$/,'');
+  if(scholars[base])return base;
+  const tokens=base.match(/\d+/g)||[];
+  const exact=tokens.find(t=>scholars[String(t)]);
+  return exact?String(exact):'';
+}
+function previewBulkStudentPhotos(files){
+  stagedBulkStudentPhotos=[];
+  const arr=[...(files||[])].filter(f=>/^image\/(jpeg|png|webp)$/i.test(f.type));
+  arr.forEach(file=>{
+    const studentId=extractStudentIdFromPhotoName(file.name);
+    stagedBulkStudentPhotos.push({file,studentId,scholar:studentId?scholars[studentId]:null,status:studentId?'Matched':'No Match'});
+  });
+  renderBulkPhotoPreview();
+}
+function renderBulkPhotoPreview(){
+  const rows=stagedBulkStudentPhotos;
+  const matched=rows.filter(r=>r.scholar).length;
+  const unmatched=rows.length-matched;
+  const summary=document.getElementById('bulkPhotoSummary');
+  const progress=document.getElementById('bulkPhotoProgress');
+  const btn=document.getElementById('bulkPhotoUploadBtn');
+  if(summary)summary.textContent=`${rows.length} selected • ${matched} matched • ${unmatched} no match`;
+  if(progress)progress.textContent=rows.length?`${matched} photo${matched===1?'':'s'} ready to upload.`:'No photos selected.';
+  if(btn)btn.disabled=!matched;
+  const box=document.getElementById('bulkPhotoPreview');if(!box)return;
+  if(!rows.length){box.innerHTML='<div style="padding:18px;color:var(--muted);font-size:11px">No photos selected.</div>';return}
+  box.innerHTML=`<table class="rosterTable"><thead><tr><th>Photo File</th><th>Student ID</th><th>Scholar</th><th>Status</th></tr></thead><tbody>${
+    rows.map(r=>`<tr>
+      <td><b>${escapeHtml(r.file.name)}</b></td>
+      <td>${escapeHtml(r.studentId||'—')}</td>
+      <td>${r.scholar?escapeHtml(scholarName(r.scholar)):'—'}</td>
+      <td><span class="pill ${r.scholar?'green':'orange'}">${r.scholar?'MATCHED':'NO MATCH'}</span></td>
+    </tr>`).join('')
+  }</tbody></table>`;
+}
+async function resizeStudentPhotoForCloud(file){
+  const data=await new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>resolve(reader.result);
+    reader.onerror=reject;
+    reader.readAsDataURL(file);
+  });
+  const img=await new Promise((resolve,reject)=>{
+    const im=new Image();im.onload=()=>resolve(im);im.onerror=reject;im.src=data;
+  });
+  const max=700;
+  const scale=Math.min(1,max/Math.max(img.width,img.height));
+  const w=Math.max(1,Math.round(img.width*scale)),h=Math.max(1,Math.round(img.height*scale));
+  const c=document.createElement('canvas');c.width=w;c.height=h;
+  c.getContext('2d').drawImage(img,0,0,w,h);
+  const blob=await new Promise(resolve=>c.toBlob(resolve,'image/jpeg',0.82));
+  if(!blob)throw new Error('Could not resize '+file.name);
+  return blob;
+}
+async function uploadBulkStudentPhotos(){
+  if(!window.gwcaCloudReady){alert('Sign in to the shared system first.');return}
+  if(!['admin','transportation_staff'].includes(currentTransportRole())){
+    alert('Administrator or Transportation Staff access is required to upload student photos.');return;
+  }
+  const matched=stagedBulkStudentPhotos.filter(r=>r.scholar);
+  if(!matched.length){alert('No photos are matched to Student IDs.');return}
+  const btn=document.getElementById('bulkPhotoUploadBtn');
+  const progress=document.getElementById('bulkPhotoProgress');
+  btn.disabled=true;
+  let ok=0,failed=0;
+  for(let i=0;i<matched.length;i++){
+    const row=matched[i];
+    try{
+      progress.textContent=`Uploading ${i+1} of ${matched.length}: ${row.file.name}`;
+      const blob=await resizeStudentPhotoForCloud(row.file);
+      const objectPath=`${row.studentId}.jpg`;
+      const {error:uploadError}=await window.gwcaSupabase.storage.from(GWCA_STUDENT_PHOTO_BUCKET)
+        .upload(objectPath,blob,{contentType:'image/jpeg',upsert:true,cacheControl:'3600'});
+      if(uploadError)throw uploadError;
+      const {data:urlData}=window.gwcaSupabase.storage.from(GWCA_STUDENT_PHOTO_BUCKET).getPublicUrl(objectPath);
+      const photoUrl=urlData?.publicUrl?`${urlData.publicUrl}?v=${Date.now()}`:'';
+      if(!photoUrl)throw new Error('Photo URL was not created.');
+      const s=scholars[row.studentId];
+      s.photoUrl=photoUrl;
+      s.photoData='';
+      scholars[row.studentId]=s;
+      const {error:dbError}=await window.gwcaSupabase.from('scholars').upsert(cloudScholarRow(s),{onConflict:'student_id'});
+      if(dbError)throw dbError;
+      row.status='Uploaded';ok++;
+    }catch(e){
+      console.error('Photo upload failed',row.file.name,e);
+      row.status='Failed: '+(e.message||String(e));failed++;
+    }
+  }
+  saveScholars(scholars);
+  renderRoster();
+  renderBulkPhotoPreview();
+  progress.textContent=`Complete — ${ok} uploaded${failed?` • ${failed} failed`:''}.`;
+  btn.disabled=false;
+}
+
+function renderRoster(){if(!document.getElementById('rosterBody'))return;let q=(document.getElementById('search')?.value||'').trim().toLowerCase();let bf=document.getElementById('rosterBusFilter')?.value||'';let rows=Object.values(scholars).filter(s=>{let hay=[scholarName(s),s.studentId,s.barcodeId,s.grade,s.bus,s.stop,s.teacher].join(' ').toLowerCase();let busOK=!bf||(bf==='Unassigned'?!s.bus:s.bus===bf);return hay.includes(q)&&busOK}).sort((a,b)=>scholarName(a).localeCompare(scholarName(b)));document.getElementById('rosterBody').innerHTML=rows.length?rows.map(s=>{let bc=(s.bus||'').toLowerCase().split(' ')[0];return `<tr><td><div style="display:flex;align-items:center;gap:9px">${(s.photoUrl||s.photoData)?`<img src="${s.photoUrl||s.photoData}" alt="" style="width:34px;height:34px;border-radius:8px;object-fit:cover">`:`<div style="width:34px;height:34px;border-radius:8px;background:#e9eef5;display:grid;place-items:center">👤</div>`}<div><b>${escapeHtml(scholarName(s))}</b><div style="font-size:9px;color:var(--muted);margin-top:2px">${escapeHtml(s.teacher||'')}</div></div></div></td><td>${escapeHtml(s.grade||'—')}</td><td>${escapeHtml(s.studentId||'')}</td><td>${escapeHtml(s.am||'—')}</td><td>${escapeHtml(s.pm||'—')}</td><td>${s.bus?`<span class="busChip ${bc}">${escapeHtml(s.bus)}</span>`:'<span class="pill orange">Unassigned</span>'}</td><td>${escapeHtml(s.stop||'—')}</td><td><span class="pill ${s.status==='Inactive'?'statusInactive':'statusActive'}">${escapeHtml(s.status||'Active')}</span></td><td><div class="rowActions"><button class="tinyBtn" onclick="editScholar('${jsQuote(s.studentId)}')">Edit</button><button class="dangerBtn" onclick="deleteScholar('${jsQuote(s.studentId)}')">Delete</button></div></td></tr>`}).join(''):`<tr><td colspan="9"><div class="emptyState">No scholars match this search.</div></td></tr>`;updateScholarMetrics()}
 function updateScholarMetrics(){let a=Object.values(scholars),rt=document.getElementById('rosterTotal'),ra=document.getElementById('rosterAssigned'),ru=document.getElementById('rosterUnassigned'),rv=document.getElementById('rosterActive');if(rt)rt.textContent=a.length;if(ra)ra.textContent=a.filter(s=>s.bus).length;if(ru)ru.textContent=a.filter(s=>!s.bus).length;if(rv)rv.textContent=a.filter(s=>(s.status||'Active')==='Active').length;let metric=document.querySelector('.metric:nth-child(2) .metricValue');if(metric)metric.textContent=a.length}
 
 function scholarPhotoHtml(s,cls='scanScholarPhoto'){
-  if(s&&s.photoData)return `<img class="${cls}" src="${s.photoData}" alt="${escapeHtml(scholarName(s))}">`;
+  const photo=s&&(s.photoUrl||s.photoData);
+  if(photo)return `<img class="${cls}" src="${photo}" alt="${escapeHtml(scholarName(s))}">`;
   return `<div class="${cls==='scanScholarPhoto'?'scanScholarPlaceholder':'photoEditorPlaceholder'}">👤</div>`;
 }
 function updateScholarPhotoPreview(data=''){
