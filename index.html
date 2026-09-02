@@ -41,6 +41,21 @@ button{cursor:pointer}
 .main{margin-left:268px;width:calc(100% - 268px);min-height:100vh;padding-bottom:72px}
 .topbar{height:86px;background:rgba(255,255,255,.95);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 28px;position:sticky;top:0;z-index:5;backdrop-filter:blur(10px)}
 .pageHeading{display:flex;align-items:center;gap:13px}.pageIcon{width:44px;height:44px;border-radius:13px;background:var(--orange-soft);display:grid;place-items:center;color:var(--orange);font-size:22px}.title{font-size:24px;font-weight:900;letter-spacing:.25px}.sub{font-size:12px;color:var(--muted);margin-top:3px}.topMeta{display:flex;align-items:center;gap:20px}.dateBox{font-size:12px;text-align:right;color:var(--muted)}.dateBox b{display:block;color:var(--text);font-size:13px;margin-bottom:2px}.userCard{display:flex;align-items:center;gap:10px;padding-left:18px;border-left:1px solid var(--border)}.avatar{width:39px;height:39px;border-radius:50%;background:linear-gradient(145deg,#e9eef5,#cbd7e4);display:grid;place-items:center;font-size:18px}.userCard b{font-size:13px}.userCard small{display:block;color:var(--muted);margin-top:2px}
+#headerUserCard{max-width:390px;min-width:0}
+#headerSignOutBtn{flex:0 0 auto}
+@media(max-width:1100px){
+  .topbar{height:auto;min-height:86px;gap:12px;flex-wrap:wrap;padding-top:12px;padding-bottom:12px}
+  .topMeta{margin-left:auto;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+  .dateBox{display:none}
+  #headerUserCard{max-width:100%}
+}
+@media(max-width:760px){
+  .topbar{align-items:flex-start}
+  .pageHeading{width:100%}
+  .topMeta{width:100%;justify-content:flex-start}
+  #headerUserCard{padding-left:0;border-left:0}
+  #cloudUserLabel{max-width:180px!important}
+}
 .content{padding:22px 26px}.view{display:none}.view.active{display:block}.simple{max-width:1420px;margin:0 auto}
 .metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px}.metric{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:18px;box-shadow:var(--shadow);display:flex;align-items:center;gap:14px;min-height:112px}.metricIcon{width:48px;height:48px;border-radius:14px;display:grid;place-items:center;font-size:20px;font-weight:900;flex:0 0 auto}.miNavy{background:#eaf1f8;color:var(--navy-800)}.miGreen{background:#eaf7ef;color:var(--green)}.miBlue{background:#eaf2ff;color:var(--blue)}.miOrange{background:var(--orange-soft);color:var(--orange)}.metricLabel{font-size:11px;font-weight:900;letter-spacing:.7px;color:#516175}.metricValue{font-size:30px;line-height:1.05;font-weight:900;margin-top:4px}.metricSmall{font-size:11px;color:var(--muted);margin-top:4px}.metricAction{margin-left:auto;align-self:flex-start;background:var(--orange);border:none;color:white;font-weight:900;padding:9px 12px;border-radius:9px;box-shadow:0 7px 14px rgba(244,122,19,.2)}
 .panel{background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);margin-top:16px;overflow:hidden}.panelPad{padding:18px}.panelHeader{padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:15px}.panelHeader h3{margin:0;font-size:14px;letter-spacing:.4px}.panelHeader small{color:var(--muted);font-weight:700}
@@ -116,10 +131,7 @@ button{cursor:pointer}
     </div>
   </div>
 </div>
-<div id="cloudUserBar" style="display:none;position:fixed;right:18px;top:12px;z-index:9000;background:#fff;border:1px solid #dbe3ec;border-radius:999px;padding:6px 8px 6px 12px;box-shadow:0 6px 20px rgba(0,0,0,.12);font-size:10px">
-  <span id="cloudConnectionDot" title="Shared database connected" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#22a06b;margin-right:7px"></span><span id="cloudUserLabel" style="font-weight:800;margin-right:8px"></span>
-  <button onclick="cloudSignOut()" style="border:0;border-radius:999px;padding:6px 9px;background:#eef3f8;color:#193b5c;font-weight:800;cursor:pointer">Sign Out</button>
-</div>
+<div id="cloudUserBar" style="display:none"></div>
 
 <div class="app">
   <aside class="sidebar">
@@ -146,7 +158,15 @@ button{cursor:pointer}
       </div>
       <div class="topMeta">
         <div class="dateBox"><b id="todayDate"></b><span id="todayTime"></span></div>
-        <div class="userCard"><div class="avatar">👤</div><div><b>Transportation Admin</b><small>GWCA Operations</small></div></div>
+        <div class="userCard" id="headerUserCard">
+          <div class="avatar">👤</div>
+          <div style="min-width:0">
+            <b id="cloudUserLabel" style="display:block;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">Signed In</b>
+            <small id="cloudUserRole">GWCA Transportation</small>
+          </div>
+          <span id="cloudConnectionDot" title="Shared database connected" style="width:8px;height:8px;border-radius:50%;background:#22a06b;flex:0 0 auto;margin-left:4px"></span>
+          <button id="headerSignOutBtn" onclick="cloudSignOut()" style="border:0;border-radius:8px;padding:7px 9px;background:#eef3f8;color:#193b5c;font-size:10px;font-weight:800;cursor:pointer;margin-left:4px">Sign Out</button>
+        </div>
       </div>
     </header>
 
@@ -2382,8 +2402,11 @@ async function cloudRenderStaffAdmin(){
 
 function cloudSetSignedIn(staff,user){
   document.getElementById('cloudLoginOverlay').style.display='none';
-  document.getElementById('cloudUserBar').style.display='block';
-  document.getElementById('cloudUserLabel').textContent=(staff.display_name||user.email)+' · '+(GWCA_ROLE_LABELS[staff.role]||String(staff.role||'staff').replace('_',' '));
+  document.getElementById('cloudUserBar').style.display='none';
+  const label=document.getElementById('cloudUserLabel');
+  const role=document.getElementById('cloudUserRole');
+  if(label)label.textContent=staff.display_name||user.email;
+  if(role)role.textContent=GWCA_ROLE_LABELS[staff.role]||String(staff.role||'staff').replace('_',' ');
   applyRolePermissions();
 }
 
@@ -2391,6 +2414,8 @@ function cloudSetSignedOut(){
   window.gwcaCloudReady=false;window.gwcaCloudStaff=null;
   [...nav.children].forEach(b=>b.style.display='flex');
   document.getElementById('cloudUserBar').style.display='none';
+  const label=document.getElementById('cloudUserLabel');if(label)label.textContent='Signed In';
+  const role=document.getElementById('cloudUserRole');if(role)role.textContent='GWCA Transportation';
   document.getElementById('cloudLoginOverlay').style.display='flex';
   document.getElementById('cloudLoginPassword').value='';
 }
