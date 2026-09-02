@@ -911,10 +911,13 @@ async function uploadStudentPhotoViaREST(studentId,blob,onStage){
 
   if(onStage)onStage('Connecting to Supabase Storage…');
 
+  // Always use a fresh path. This avoids overwrite/upsert conflicts and CDN staleness.
+  const safeId=String(studentId).replace(/[^A-Za-z0-9_-]/g,'_');
+  const objectPath=`${safeId}/${Date.now()}_${Math.random().toString(36).slice(2,8)}.jpg`;
+  const endpoint=`${GWCA_SUPABASE_URL}/storage/v1/object/${encodeURIComponent(GWCA_STUDENT_PHOTO_BUCKET)}/${objectPath.split('/').map(encodeURIComponent).join('/')}`;
+
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),15000);
-  const objectPath=`${studentId}.jpg`;
-  const endpoint=`${GWCA_SUPABASE_URL}/storage/v1/object/${encodeURIComponent(GWCA_STUDENT_PHOTO_BUCKET)}/${encodeURIComponent(objectPath)}`;
 
   try{
     if(onStage)onStage('Sending photo bytes to Supabase Storage…');
@@ -924,29 +927,18 @@ async function uploadStudentPhotoViaREST(studentId,blob,onStage){
       headers:{
         'Authorization':'Bearer '+session.access_token,
         'apikey':GWCA_SUPABASE_PUBLISHABLE_KEY,
-        'Content-Type':'image/jpeg',
-        'x-upsert':'true'
+        'Content-Type':'image/jpeg'
       },
       body:blob,
       signal:controller.signal,
       cache:'no-store'
     });
 
-    if(onStage)onStage(`Supabase responded HTTP ${response.status}…`);
-
-    const bodyText=await withTimeout(
-      response.text(),
-      5000,
-      'Reading the Supabase Storage response'
-    );
+    if(onStage)onStage(`Supabase responded HTTP ${response.status}`);
 
     if(!response.ok){
-      let detail=bodyText;
-      try{
-        const parsed=JSON.parse(bodyText);
-        detail=parsed.message||parsed.error||parsed.statusCode||bodyText;
-      }catch(_){}
-      throw new Error(`Storage HTTP ${response.status}: ${detail||response.statusText}`);
+      // Do not wait on response.text(); some browsers were hanging on the error body.
+      throw new Error(`Storage HTTP ${response.status}`);
     }
 
     return objectPath;
@@ -1016,10 +1008,11 @@ async function uploadBulkStudentPhotos(){
     }catch(e){
       console.error('Photo upload failed',row.file.name,e);
       let msg=e.message||String(e);
-      if(/HTTP 404|bucket.*not found|not found.*bucket/i.test(msg))msg=`Storage bucket "${GWCA_STUDENT_PHOTO_BUCKET}" was not found. Run the Phase 5 Student Photos SQL in Supabase.`;
-      else if(/HTTP 401|HTTP 403|row-level security|rls|policy|unauthorized|forbidden|permission/i.test(msg))msg='Supabase Storage permission blocked this upload. Re-run the Phase 5 Student Photos SQL and make sure you are signed in as Administrator or Transportation Staff.';
-      else if(/sign-in session.*timed out|Checking your Supabase sign-in/i.test(msg))msg='The Supabase sign-in session lookup timed out. Sign out of GWCA Transportation, sign back in, and try the photo again.';
-      else if(/Storage upload timed out|timed out/i.test(msg))msg='Supabase Storage did not respond before the timeout. The failed step is shown above; try signing out and back in first.';
+      if(/HTTP 404|bucket.*not found|not found.*bucket/i.test(msg))msg=`Storage bucket "${GWCA_STUDENT_PHOTO_BUCKET}" was not found.`;
+      else if(/HTTP 401|HTTP 403|row-level security|rls|policy|unauthorized|forbidden|permission/i.test(msg))msg='Supabase Storage permission blocked this upload. Make sure you are signed in and the student-photos INSERT policy allows authenticated users.';
+      else if(/HTTP 400/i.test(msg))msg='Supabase rejected this new photo request with HTTP 400. The app used a fresh filename, so this is no longer an overwrite conflict.';
+      else if(/sign-in session.*timed out|Checking your Supabase sign-in/i.test(msg))msg='The Supabase sign-in session lookup timed out. Sign out of GWCA Transportation, sign back in, and try again.';
+      else if(/Storage upload timed out|timed out/i.test(msg))msg='Supabase Storage did not respond before the timeout.';
       row.status='Failed: '+msg;
       failed++;
     }
