@@ -607,7 +607,13 @@ button{cursor:pointer}
     </div>
   </main>
 
-  <div class="quickbar"><b>QUICK ACTIONS</b><div class="quickItem" id="quickStaffRoles" onclick="show('Staff & Roles')" style="cursor:pointer"><span>👥</span> Staff & Roles</div><div class="quickItem"><span>⌕</span> Find Scholar</div><div class="quickItem"><span>▤</span> Daily Attendance Report</div><div class="quickItem"><span>▣</span> Print Manifests</div><div class="quickItem"><span>✉</span> Parent Message</div></div>
+  <div class="quickbar"><b>QUICK ACTIONS</b>
+  <div class="quickItem" id="quickStaffRoles" onclick="show('Staff & Roles')" style="cursor:pointer"><span>👥</span> Staff & Roles</div>
+  <div class="quickItem" onclick="quickFindScholar()" style="cursor:pointer"><span>⌕</span> Find Scholar</div>
+  <div class="quickItem" onclick="quickDailyAttendanceReport()" style="cursor:pointer"><span>▤</span> Daily Attendance Report</div>
+  <div class="quickItem" onclick="quickPrintManifests()" style="cursor:pointer"><span>▣</span> Print Manifests</div>
+  <div class="quickItem" onclick="quickParentMessage()" style="cursor:pointer"><span>✉</span> Parent Message</div>
+</div>
 </div>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script>
@@ -626,6 +632,15 @@ pages.forEach((p,i)=>{
   b.onclick=()=>show(p);
   nav.appendChild(b)
 });
+
+document.querySelectorAll('.quickItem[onclick]').forEach(el=>{
+  el.setAttribute('role','button');
+  el.setAttribute('tabindex','0');
+  el.addEventListener('keydown',e=>{
+    if(e.key==='Enter'||e.key===' '){e.preventDefault();el.click();}
+  });
+});
+
 function show(p){
   if(window.gwcaCloudStaff && !roleCanAccess(p)){
     p=roleCanAccess('Dashboard')?'Dashboard':roleAllowedPages()[0];
@@ -646,6 +661,42 @@ function show(p){
   if(p==='Administration'){loadAdminSettings();renderAdminSummary()}
   if(p==='Parent Notifications'){loadNotificationSettings();renderNotifications()}
 }
+
+function quickFindScholar(){
+  show('Scholars');
+  setTimeout(()=>{
+    const el=document.getElementById('rosterSearch')
+      || document.getElementById('scholarSearch')
+      || document.querySelector('#Scholars input[type="search"]')
+      || document.querySelector('#Scholars input[placeholder*="Search" i]');
+    if(el){el.focus();el.select?.();}
+  },80);
+}
+function quickDailyAttendanceReport(){
+  show('Reports & History');
+  setTimeout(()=>{
+    const reportSelect=document.getElementById('reportType');
+    if(reportSelect){
+      const option=[...reportSelect.options].find(o=>/daily|attendance/i.test(o.textContent||o.value));
+      if(option){reportSelect.value=option.value;reportSelect.dispatchEvent(new Event('change'));}
+    }
+  },80);
+}
+function quickPrintManifests(){
+  show('Live Manifests');
+  setTimeout(()=>{
+    const printBtn=[...document.querySelectorAll('#Live\\ Manifests button')].find(b=>/print/i.test(b.textContent||''));
+    if(printBtn)printBtn.scrollIntoView({behavior:'smooth',block:'center'});
+  },80);
+}
+function quickParentMessage(){
+  show('Parent Notifications');
+  setTimeout(()=>{
+    const queue=document.getElementById('notificationQueue');
+    if(queue)queue.scrollIntoView({behavior:'smooth',block:'start'});
+  },80);
+}
+
 function updateClock(){const d=new Date(),dateEl=document.getElementById('todayDate'),timeEl=document.getElementById('todayTime');if(dateEl)dateEl.textContent=d.toLocaleDateString([], {weekday:'long',month:'long',day:'numeric',year:'numeric'});if(timeEl)timeEl.textContent=d.toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});}updateClock();setInterval(updateClock,30000);
 const buses=[['RED BUS',21,23,'red','Grand River & Schaffer'],['BLUE BUS',18,18,'blue','Linwood & Glendale'],['YELLOW BUS',16,19,'yellow','Hamilton & 6 Mile']];
 function makeBus([name,on,total,c,next]){let pct=Math.round(on/total*100);let bg=c==='red'?'redBg':c==='blue'?'blueBg':'yellowBg';let stat=on===total?'READY':'BOARDING';let statStyle=on===total?'background:#e9f8ef;color:#238246':'background:#fff7dc;color:#936400';return `<div class="busCard"><div class="busStripe ${bg}"></div><div class="busTop"><div class="busName"><div class="busDot ${bg}">🚌</div>${name}</div><div class="busStatus" style="${statStyle}">${stat}</div></div><div class="busBody"><div class="busStats"><div class="busStat"><b>${on} / ${total}</b><span>SCHOLARS BOARDED</span></div><div class="busStat"><b>${total-on}</b><span>REMAINING</span></div></div><div class="progressRow"><span>Boarding progress</span><span>${pct}%</span></div><div class="bar"><div class="fill ${bg}" style="width:${pct}%"></div></div><div class="routeInfo"><div><small>NEXT STOP</small><b>${next}</b></div><div><small>STATUS</small><b>${stat}</b></div></div><div class="actions"><button class="btn" onclick="show('Live Manifests')">VIEW MANIFEST</button><button class="btn primary ${bg}" onclick="show('Scan Center')">START SCANNING</button></div></div></div>`}
